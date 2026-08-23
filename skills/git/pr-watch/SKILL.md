@@ -197,8 +197,9 @@ while true; do
       RJ=$(gh run list --commit "$SHA" -R "$OWNER/$REPO" --json databaseId,status,conclusion,name -L 50 2>/dev/null) || CI_API_OK=false
 
       if [ "$CI_API_OK" = true ]; then
-        # in_progress / queued があれば CI 確定待ち → スキップ
-        IP=$(echo "$RJ" | jq '[.[] | select(.status == "in_progress" or .status == "queued")] | length')
+        # completed 以外 (in_progress / queued / requested / waiting / pending) が
+        # あれば CI 確定待ち → スキップ
+        IP=$(echo "$RJ" | jq '[.[] | select(.status != "completed")] | length')
 
         if [ "$IP" -eq 0 ] && [ "$(echo "$RJ" | jq 'length')" -gt 0 ]; then
           CF=$(echo "$RJ" | jq -r '[.[] | select(.conclusion == "failure") | (.databaseId | tostring)] | sort | join(",")')
@@ -379,19 +380,24 @@ query {
    gh api repos/{owner}/{repo}/pulls/comments/<databaseId>/reactions -f content="+1"
 
    # スレッドに返信 (GraphQL mutation、thread id 使用)
-   # <thread_id>, <body> は実際の値に置き換える
-   gh api graphql -F query='
-   mutation {
-     addPullRequestReviewThreadReply(input: {pullRequestReviewThreadId: "<thread_id>", body: "<body>"}) {
+   # 返信本文は query に直接埋め込まず GraphQL variable で渡す
+   # (引用符・改行・バックスラッシュを含むと query が壊れ、返信なしで resolve される恐れがある)
+   gh api graphql \
+     -f threadId='<thread_id>' \
+     -f body='<返信本文>' \
+     -f query='
+   mutation($threadId: ID!, $body: String!) {
+     addPullRequestReviewThreadReply(input: {pullRequestReviewThreadId: $threadId, body: $body}) {
        comment { id body }
      }
    }'
 
    # スレッドを resolve
-   # <thread_id> は実際の値に置き換える
-   gh api graphql -F query='
-   mutation {
-     resolveReviewThread(input: {threadId: "<thread_id>"}) {
+   gh api graphql \
+     -f threadId='<thread_id>' \
+     -f query='
+   mutation($threadId: ID!) {
+     resolveReviewThread(input: {threadId: $threadId}) {
        thread { isResolved }
      }
    }'

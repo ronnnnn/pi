@@ -38,10 +38,17 @@ todo({ action: "add", text: "完了報告: レビュー結果を報告" })
 
 ### 1. PR の特定
 
-引数で PR 番号/URL が指定されていない場合、現在のブランチから PR を特定する。引数が URL の場合は末尾の数値から PR 番号を抽出する:
+引数で PR 番号/URL が指定されていない場合、現在のブランチから PR を特定する:
 
 ```bash
 gh pr view --json number --jq '.number'
+```
+
+引数が URL の場合は、URL から owner / repo / PR 番号を抽出し、**以降の全ての gh コマンド (`gh pr view` / `gh pr diff` / `gh api` 等) に `-R <owner>/<repo>` を付与する**。`-R` なしではカレントリポジトリの同一番号の無関係な PR をレビュー・コメントしてしまう可能性がある:
+
+```bash
+# URL 形式: https://github.com/<owner>/<repo>/pull/<number>
+gh pr view <number> -R <owner>/<repo> --json number,title,url,baseRefName,headRefName,headRefOid
 ```
 
 ```bash

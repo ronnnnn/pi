@@ -193,11 +193,14 @@ git diff
 
 ### 6. 変更のステージング
 
-修正したファイルをステージングする:
+本ワークフローで修正したファイルのみをステージングする。ユーザーが元々持っていた無関係な変更 (staged / unstaged / untracked) を巻き込まないよう、`git add -A` は使わない:
 
 ```bash
-git add -A
+# レビュー修正で変更したファイルを個別に指定する
+git add <修正したファイル 1> <修正したファイル 2> ...
 ```
+
+修正前からステージング済みだった無関係な変更がある場合は、index を上書きしないよう注意する (同一ファイルに既存の staged 変更がある場合はユーザーに確認する)。
 
 ### 7. コミットメッセージの生成
 
@@ -349,10 +352,14 @@ gh api repos/{owner}/{repo}/pulls/comments/<databaseId>/reactions \
 
 # レビュースレッドへの返信 (GraphQL mutation)
 # thread_id はステップ 2 で取得した reviewThreads の id を使用
-# <thread_id>, <body> は実際の値に置き換える
-gh api graphql -F query='
-mutation {
-  addPullRequestReviewThreadReply(input: {pullRequestReviewThreadId: "<thread_id>", body: "<body>"}) {
+# 返信本文は query に直接埋め込まず GraphQL variable で渡す
+# (引用符・改行・バックスラッシュを含むと query が壊れるため)
+gh api graphql \
+  -f threadId='<thread_id>' \
+  -f body='<返信本文>' \
+  -f query='
+mutation($threadId: ID!, $body: String!) {
+  addPullRequestReviewThreadReply(input: {pullRequestReviewThreadId: $threadId, body: $body}) {
     comment {
       id
       body
@@ -365,10 +372,11 @@ mutation {
 
 ```bash
 # スレッドを resolve (GraphQL mutation)
-# <thread_id> は実際の値に置き換える
-gh api graphql -F query='
-mutation {
-  resolveReviewThread(input: {threadId: "<thread_id>"}) {
+gh api graphql \
+  -f threadId='<thread_id>' \
+  -f query='
+mutation($threadId: ID!) {
+  resolveReviewThread(input: {threadId: $threadId}) {
     thread {
       isResolved
     }
