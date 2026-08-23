@@ -39,7 +39,7 @@ PR のレビューコメントと CI 失敗を監視し、検出次第自動で�
 | イベント                             | 意味                                                      | 対応                        |
 | ------------------------------------ | --------------------------------------------------------- | --------------------------- |
 | `NEW_REVIEWS\|thread_id1,thread_id2` | 新しい未解決レビュースレッドを検出                        | レビュー修正を実行 (3a)     |
-| `CI_FAIL\|run_id1,run_id2`           | CI 失敗を検出 (全 run 完了後、run ID のみ)                | CI 修正を実行 (3b)          |
+| `CI_FAIL\|check1,check2`             | CI 失敗を検出 (全 check 完了後、失敗 check の識別子)        | CI 修正を実行 (3b)          |
 | `PR_MERGED`                          | PR がマージされた                                         | 監視終了 → 完了報告 (4)     |
 | `PR_CLOSED`                          | PR がクローズされた                                       | 監視終了 → 完了報告 (4)     |
 | `PR_CONFLICT`                        | コンフリクトが発生した                                    | コンフリクト解消を実行 (3d) |
@@ -54,7 +54,7 @@ PR のレビューコメントと CI 失敗を監視し、検出次第自動で�
 - `OWNER`, `REPO`: リポジトリ情報
 - `MY_LOGIN`: 自分の GitHub ユーザー名 (`gh api user --jq '.login'` で取得、自分のコメントを除外するため)
 - `SHELL_ID`: 監視スクリプトの background shell ID (`bash_output` での確認と `kill_shell` での停止に使用)
-- `UNFIXABLE_RUNS`: 修正不可能と判断した CI run ID のリスト (以降の処理で同じ失敗の再処理をスキップする)
+- `UNFIXABLE_CHECKS`: 修正不可能と判断した check 識別子 (link または name) のリスト (以降の処理で同じ失敗の再処理をスキップする)
 - `REVIEW_COMMITS`: レビュー修正コミット数
 - `CI_COMMITS`: CI 修正コミット数
 - `REPLIED_COMMENTS`: 返信済みコメント数
@@ -191,20 +191,21 @@ while true; do
       PREV_THREADS="$CT"
     fi
 
-    # CI ステータスチェック
+    # CI ステータスチェック。Actions の workflow run だけでなく GitHub Apps の
+    # check や legacy な commit status も検出するため、gh run list ではなく
+    # gh pr checks の rollup を使う
     if [ -n "$SHA" ]; then
-      CI_API_OK=true
-      RJ=$(gh run list --commit "$SHA" -R "$OWNER/$REPO" --json databaseId,status,conclusion,name -L 50 2>/dev/null) || CI_API_OK=false
+      CJ=$(gh pr checks "$PR_NUMBER" -R "$OWNER/$REPO" --json name,state,bucket,link 2>/dev/null)
+      if echo "$CJ" | jq -e 'type == "array"' >/dev/null 2>&1; then
+        # pending の check があれば CI 確定待ち → スキップ
+        PENDING=$(echo "$CJ" | jq '[.[] | select(.bucket == "pending")] | length')
 
-      if [ "$CI_API_OK" = true ]; then
-        # completed 以外 (in_progress / queued / requested / waiting / pending) が
-        # あれば CI 確定待ち → スキップ
-        IP=$(echo "$RJ" | jq '[.[] | select(.status != "completed")] | length')
+        if [ "$PENDING" -eq 0 ] && [ "$(echo "$CJ" | jq 'length')" -gt 0 ]; then
+          # 識別子は link (なければ name)。イベント行の区切りと衝突しないよう
+          # カンマは _ に置換する
+          CF=$(echo "$CJ" | jq -r '[.[] | select(.bucket == "fail") | ((.link // .name) | gsub(","; "_"))] | sort | join(",")')
 
-        if [ "$IP" -eq 0 ] && [ "$(echo "$RJ" | jq 'length')" -gt 0 ]; then
-          CF=$(echo "$RJ" | jq -r '[.[] | select(.conclusion == "failure") | (.databaseId | tostring)] | sort | join(",")')
-
-          # 新しい失敗のみ検出 (PREV_FAILS に含まれない run ID のみ抽出)
+          # 新しい失敗のみ検出 (PREV_FAILS に含まれない check 識別子のみ抽出)
           if [ -n "$CF" ]; then
             NEW_F=""
             IFS=',' read -ra CUR_FAIL_ARR <<< "$CF"
@@ -220,9 +221,10 @@ while true; do
           fi
           PREV_FAILS="$CF"
         fi
-      else
-        API_FAIL=true
       fi
+      # check が未設定のリポジトリでは gh pr checks が JSON 以外を返すことが
+      # あるため、その場合は API エラー扱いにせずスキップする
+      # (API 障害の検出は PR 状態チェックと GraphQL 側が担う)
     fi
   fi
 
@@ -467,7 +469,7 @@ ref: https://go.dev/ref/spec#Index_expressions
 
 #### 3b. CI_FAIL イベント
 
-通知に含まれる run ID を `UNFIXABLE_RUNS` に含まれないものでフィルタし、処理対象とする。
+通知に含まれる check 識別子 (link または name) を `UNFIXABLE_CHECKS` に含まれないものでフィルタし、処理対象とする。Actions のログ取得が必要な場合は `gh run list --commit <HEAD_SHA>` で run ID を別途特定する。
 
 **処理フロー:**
 
@@ -494,7 +496,7 @@ ref: https://go.dev/ref/spec#Index_expressions
    | 環境変数・secret       | **不可** |
    | 権限・認証             | **不可** |
 
-3. 修正不可能なエラーの run ID を `UNFIXABLE_RUNS` に追加し、以降のイベントで再処理をスキップする。完了報告で通知する
+3. 修正不可能なエラーの check 識別子を `UNFIXABLE_CHECKS` に追加し、以降のイベントで再処理をスキップする。完了報告で通知する
 4. 修正したファイルをステージング: `git add <修正ファイル>`
 5. commit-proposer subagent でコミットメッセージを生成する (エラー時は自前生成にフォールバック)
 6. 推奨メッセージでコミットする

@@ -128,10 +128,17 @@ fi
 # 変換前の remote 設定を記録
 REMOTE_BEFORE=$(git -C "$DIR" remote -v)
 
-# 未コミットの削除 (staged / unstaged) を記録 (.git 移動前に取得する必要がある)。
-# worktree add が HEAD 版のファイルを再作成し、退避ファイルの上書きコピーでは
-# 削除が反映されないため、変換後に再適用する
-DELETED_PATHS=$(git -C "$DIR" status --porcelain | awk 'substr($0,1,1)=="D" || substr($0,2,1)=="D" {print substr($0,4)}')
+# 未コミットの削除 (staged / unstaged) と rename の旧パスを記録 (.git 移動前に
+# 取得する必要がある)。worktree add が HEAD 版のファイルを再作成し、退避ファイルの
+# 上書きコピーでは削除・rename 元の消滄が反映されないため、変換後に再適用する。
+# copy (C) の source は working tree に実在するため削除対象にしない
+DELETED_PATHS=$(git -C "$DIR" status --porcelain | awk '
+  substr($0,1,1)=="D" || substr($0,2,1)=="D" {print substr($0,4)}
+  substr($0,1,1)=="R" || substr($0,2,1)=="R" {
+    line = substr($0,4)
+    idx = index(line, " -> ")
+    if (idx > 0) print substr(line, 1, idx-1)
+  }')
 
 # 復旧用 trap を .git 移動前に設定 (WORK_TMPDIR は後で設定されるため条件付き)
 WORK_TMPDIR=""
@@ -142,6 +149,14 @@ trap '
     rm -rf "$DIR/$BRANCH" 2>/dev/null || true
     echo "worktree ディレクトリを削除しました" >&2
   fi
+  # ブランチ名に / を含む場合に worktree add が生成した中間ディレクトリを
+  # 空の間だけ遡って削除 (残すと退避ファイルの復元で同名ディレクトリが
+  # ネストして復旧レイアウトが壊れる)
+  d=$(dirname "$BRANCH")
+  while [ "$d" != "." ] && [ "$d" != "/" ]; do
+    rmdir "$DIR/$d" 2>/dev/null || break
+    d=$(dirname "$d")
+  done
   # 2. bare 変換を元に戻す
   if [ -d "$DIR/bare.git" ] && [ ! -d "$DIR/.git" ]; then
     git -C "$DIR/bare.git" worktree prune 2>/dev/null || true

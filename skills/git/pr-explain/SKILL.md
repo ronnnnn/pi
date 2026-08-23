@@ -36,7 +36,10 @@ todo({ action: "add", text: "解説の作成・出力: 収集した情報をも�
 
 ```bash
 # URL 形式: https://github.com/owner/repo/pull/123
-# owner, repo, number を URL から抽出
+# owner, repo, number を URL から抽出し、以降の全ての gh pr view / gh pr diff
+# に -R <owner>/<repo> を付与する (-R なしではカレントリポジトリの同一番号の
+# 無関係な PR を解説してしまう可能性がある)
+gh pr view <number> -R <owner>/<repo> --json number,title,url,baseRefName,headRefName --jq '{number, title, url, baseRefName, headRefName}'
 
 # 番号形式: 123 または #123
 # 現在のリポジトリの PR として扱う
@@ -78,23 +81,24 @@ URL から owner/repo を抽出できない場合は、現在のリポジトリ�
 **PR メタデータと description:**
 
 ```bash
-gh pr view <number> --json title,body,author,baseRefName,headRefName,labels,additions,deletions,changedFiles,createdAt
+# URL 指定の PR の場合は以降の全コマンドに -R <owner>/<repo> を付与する
+gh pr view <number> -R <owner>/<repo> --json title,body,author,baseRefName,headRefName,labels,additions,deletions,changedFiles,createdAt
 ```
 
 **コミット履歴:**
 
 ```bash
-gh pr view <number> --json commits --jq '.commits[] | "\(.oid[0:7]) \(.messageHeadline)\n\(.messageBody)"'
+gh pr view <number> -R <owner>/<repo> --json commits --jq '.commits[] | "\(.oid[0:7]) \(.messageHeadline)\n\(.messageBody)"'
 ```
 
 **コード差分:**
 
 ```bash
 # 変更ファイル一覧
-gh pr diff <number> --name-only
+gh pr diff <number> -R <owner>/<repo> --name-only
 
 # 全差分
-gh pr diff <number>
+gh pr diff <number> -R <owner>/<repo>
 ```
 
 **レビューコメント (インライン):**
