@@ -53,7 +53,7 @@ PR の CI 失敗を調査する専門エージェント。
 2. **CI チェック状態の取得**
    - PR に紐づく CI チェックの一覧と状態を取得する:
      ```bash
-     gh pr checks <number> --json name,state,description,detailsUrl --limit 100
+     gh pr checks <number> --json name,state,description,link
      ```
    - 失敗 (FAILURE) したチェックを特定する
 

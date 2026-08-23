@@ -42,7 +42,10 @@ gh pr view --json number,title,url --jq '{number, title, url}'
 gh pr view <number> --json number,title,url --jq '{number, title, url}'
 
 # URL 形式: https://github.com/owner/repo/pull/123
-# URL から owner, repo, number を抽出して使用
+# URL をそのまま渡すとカレントリポジトリ以外の PR でも正しく解決できる
+gh pr view <url> --json number,title,url --jq '{number, title, url}'
+# 併せて URL から owner, repo を抽出し、以降の gh コマンドには必ず `-R <owner>/<repo>` を付与する
+# (`-R` なしでは同一番号の無関係なローカル PR を参照する可能性がある)
 ```
 
 PR が見つからない場合はエラーハンドリングへ。

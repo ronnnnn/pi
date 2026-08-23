@@ -128,6 +128,11 @@ fi
 # 変換前の remote 設定を記録
 REMOTE_BEFORE=$(git -C "$DIR" remote -v)
 
+# 未コミットの削除 (staged / unstaged) を記録 (.git 移動前に取得する必要がある)。
+# worktree add が HEAD 版のファイルを再作成し、退避ファイルの上書きコピーでは
+# 削除が反映されないため、変換後に再適用する
+DELETED_PATHS=$(git -C "$DIR" status --porcelain | awk 'substr($0,1,1)=="D" || substr($0,2,1)=="D" {print substr($0,4)}')
+
 # 復旧用 trap を .git 移動前に設定 (WORK_TMPDIR は後で設定されるため条件付き)
 WORK_TMPDIR=""
 trap '
@@ -176,6 +181,14 @@ git -C "$DIR/bare.git" worktree add "../$BRANCH" "$BRANCH"
 
 # 退避したファイルを worktree にコピー (checkout 済みファイルを上書き)
 cp -a "$WORK_TMPDIR/." "$DIR/$BRANCH/"
+
+# 未コミットの削除を worktree に再適用 (worktree add が HEAD 版を再作成するため)
+if [ -n "$DELETED_PATHS" ]; then
+  while IFS= read -r p; do
+    [ -n "$p" ] && rm -f "$DIR/$BRANCH/$p"
+  done <<< "$DELETED_PATHS"
+  echo "未コミットの削除 $(printf '%s\n' "$DELETED_PATHS" | wc -l | tr -d ' ') 件を再適用しました" >&2
+fi
 
 # 変換成功 — 復旧用 trap を解除
 trap - ERR

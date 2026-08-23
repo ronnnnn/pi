@@ -68,8 +68,8 @@ git log origin/<base>..HEAD --pretty=format:"%h %s%n%b" --reverse
 # 変更されたファイル一覧
 gh pr view <number> --json files --jq '.files[].path'
 
-# 変更の統計
-gh pr diff <number> --stat
+# 変更の統計 (gh pr diff に --stat はないため gh pr view で取得する)
+gh pr view <number> --json additions,deletions,changedFiles
 ```
 
 変更内容を分析し、以下を把握する:

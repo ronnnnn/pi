@@ -41,6 +41,9 @@ PR のステータス情報を収集する専門エージェント。
    prompt で指定された PR 番号、URL、またはブランチから PR を特定する:
 
    ```bash
+   # URL 指定の場合 (カレントリポジトリ以外の PR でも正しく解決できる)
+   gh pr view <url> --json number,title,url --jq '{number, title, url}'
+
    # 番号指定の場合
    gh pr view <number> --json number,title,url --jq '{number, title, url}'
 
@@ -48,11 +51,13 @@ PR のステータス情報を収集する専門エージェント。
    gh pr view --json number,title,url --jq '{number, title, url}'
    ```
 
-   owner/repo を取得する (GraphQL 用):
+   owner/repo を取得する (GraphQL と `-R` 用)。URL 指定の場合は URL から抽出し、それ以外はカレントリポジトリから取得する:
 
    ```bash
    gh repo view --json owner,name --jq '"\(.owner.login)/\(.name)"'
    ```
+
+   **重要:** 以降の全ての gh コマンドに `-R <owner>/<repo>` を付与する。カレントリポジトリと異なるリポジトリの PR URL が指定された場合、`-R` なしでは同一番号の無関係なローカル PR を参照したり失敗したりする
 
 2. **情報の並列収集**
 
@@ -61,19 +66,19 @@ PR のステータス情報を収集する専門エージェント。
    **PR メタデータ:**
 
    ```bash
-   gh pr view <number> --json number,title,author,state,isDraft,baseRefName,headRefName,additions,deletions,changedFiles,createdAt,updatedAt,url
+   gh pr view <number> -R <owner>/<repo> --json number,title,author,state,isDraft,baseRefName,headRefName,additions,deletions,changedFiles,createdAt,updatedAt,url
    ```
 
    **CI ステータス:**
 
    ```bash
-   gh pr checks <number> --json name,state,bucket,link --limit 100
+   gh pr checks <number> -R <owner>/<repo> --json name,state,bucket,link
    ```
 
    **レビューステータス:**
 
    ```bash
-   gh pr view <number> --json reviewDecision,reviews --jq '{reviewDecision, reviews: [.reviews[] | {author: .author.login, state: .state}]}'
+   gh pr view <number> -R <owner>/<repo> --json reviewDecision,reviews --jq '{reviewDecision, reviews: [.reviews[] | {author: .author.login, state: .state}]}'
    ```
 
    **レビュースレッド (未解決コメント):**
@@ -108,7 +113,7 @@ PR のステータス情報を収集する専門エージェント。
    **マージ情報:**
 
    ```bash
-   gh pr view <number> --json mergeable,mergeStateStatus --jq '{mergeable, mergeStateStatus}'
+   gh pr view <number> -R <owner>/<repo> --json mergeable,mergeStateStatus --jq '{mergeable, mergeStateStatus}'
    ```
 
 3. **結果の構造化**

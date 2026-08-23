@@ -506,7 +506,7 @@ ref: https://go.dev/ref/spec#Index_expressions
 
    ```bash
    gh pr view <number> --json title,body,commits,files,additions,deletions
-   gh pr diff <number> --stat
+   gh pr diff <number> --name-only
    ```
 
 2. 以下の基準で更新の要否を判断する:
