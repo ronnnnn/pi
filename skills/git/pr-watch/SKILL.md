@@ -89,6 +89,17 @@ gh pr view --json number,title,headRefName,state --jq '{number, title, headRefNa
 - PR が `MERGED` または `CLOSED` の場合は監視を開始せず終了する
 - PR が見つからない場合は「現在のブランチに紐づく PR が見つかりません。PR 番号を指定して再実行してください。」と報告して終了する
 
+**ブランチの整合確認 (必須):** 修正・コミット・プッシュは現在のチェックアウトに対して行われるため、特に PR 番号が引数で指定された場合は、現在のブランチが PR の head branch と一致することを確認してから監視を開始する:
+
+```bash
+gh pr view "$PR_NUMBER" --json headRefName --jq '.headRefName'
+git branch --show-current
+```
+
+- 一致する場合 → そのまま続行する
+- 一致しない場合、作業ツリーがクリーン (`git status --porcelain` が空) なら `git checkout <headRefName>` で PR ブランチに切り替えてから続行する
+- 一致せず未コミット変更がある場合 → 「PR #<number> の head branch (<headRefName>) と現在のブランチ (<current>) が一致せず、未コミット変更があるため監視を開始できません。」と報告して終了する (別ブランチへの誤コミット・誤プッシュを防ぐ)
+
 状態変数を初期化する。初期化時に `MY_LOGIN=$(gh api user --jq '.login')` で自分の GitHub ユーザー名を取得する。
 
 ### 2. 監視のセットアップ
@@ -148,7 +159,8 @@ while true; do
       PREV_FAILS=""
     fi
 
-    # 未解決レビュースレッド取得
+    # 未解決レビュースレッド取得。変化検知は先頭 100 スレッドで行う
+    # (100 超の取りこぼしは 3a 側の --paginate 付き詳細取得が拾う)
     TJ=$(gh api graphql -f query='
       query {
         repository(owner: "'"$OWNER"'", name: "'"$REPO"'") {
@@ -282,11 +294,15 @@ push されたイベント行の種類に応じて、対応するサブセクシ
 
 ```bash
 # <owner>, <repo>, <number> は実際の値に置き換える
-gh api graphql -F query='
-query {
-  repository(owner: "<owner>", name: "<repo>") {
-    pullRequest(number: <number>) {
-      reviewThreads(first: 100) {
+# 100 スレッドを超える PR でも取りこぼさないよう --paginate で全ページを取得する
+gh api graphql --paginate \
+  -F owner='<owner>' -F repo='<repo>' -F number=<number> \
+  -f query='
+query($owner: String!, $repo: String!, $number: Int!, $endCursor: String) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100, after: $endCursor) {
+        pageInfo { hasNextPage endCursor }
         nodes {
           id
           isResolved
@@ -349,8 +365,8 @@ query {
 
 1. 各未解決コメントの妥当性を上記基準で判断し、ファクトチェックで検証する
 2. 修正が必要なコメントに対してコードを修正する
-3. 修正したファイルをステージングする: `git add <修正ファイル>`
-4. commit-proposer subagent でコミットメッセージを生成する:
+3. 修正したファイルをステージングする。ただし無関係な変更が既に staged の場合 (`git diff --cached --quiet` が非ゼロ) は `git add` せず、ステップ 5 で pathspec 指定のコミットを使う (index 全体のコミットで無関係な staged 変更を公開しないため): `git add <修正ファイル>`
+4. commit-proposer subagent でコミットメッセージを生成する (pathspec 方式の場合は「git diff HEAD -- <修正ファイル>で差分を確認」と prompt に含める):
 
    ```
    subagent({
@@ -365,7 +381,9 @@ query {
 5. 推奨メッセージ (候補 1) でコミットする
 
    ```bash
-   # <type>, <scope>, <subject>, <body> は commit-proposer の出力で置き換える
+   # <type>, <scope>, <subject>, <body> は commit-proposer の出力で置き換える。
+   # 無関係な staged 変更がある場合は末尾に `-- <修正ファイル>` を付けて
+   # pathspec 指定でコミットする (他の staged エントリは index に残る)
    git commit -m "$(cat <<'EOF'
    <type>(<scope>): <subject>
 
@@ -497,7 +515,7 @@ ref: https://go.dev/ref/spec#Index_expressions
    | 権限・認証             | **不可** |
 
 3. 修正不可能なエラーの check 識別子を `UNFIXABLE_CHECKS` に追加し、以降のイベントで再処理をスキップする。完了報告で通知する
-4. 修正したファイルをステージング: `git add <修正ファイル>`
+4. 修正したファイルをステージング: `git add <修正ファイル>` (無関係な変更が既に staged の場合は 3a と同様に pathspec 指定のコミットを使う)
 5. commit-proposer subagent でコミットメッセージを生成する (エラー時は自前生成にフォールバック)
 6. 推奨メッセージでコミットする
 7. `git push` でリモートに反映する

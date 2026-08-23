@@ -131,14 +131,23 @@ REMOTE_BEFORE=$(git -C "$DIR" remote -v)
 # 未コミットの削除 (staged / unstaged) と rename の旧パスを記録 (.git 移動前に
 # 取得する必要がある)。worktree add が HEAD 版のファイルを再作成し、退避ファイルの
 # 上書きコピーでは削除・rename 元の消滄が反映されないため、変換後に再適用する。
+# パスに空白・引用符等を含むと --porcelain は C クォートするため、NUL 区切りの
+# -z 形式で機械的にパースする (-z では rename は「新パス NUL 旧パス」の順)。
 # copy (C) の source は working tree に実在するため削除対象にしない
-DELETED_PATHS=$(git -C "$DIR" status --porcelain | awk '
-  substr($0,1,1)=="D" || substr($0,2,1)=="D" {print substr($0,4)}
-  substr($0,1,1)=="R" || substr($0,2,1)=="R" {
-    line = substr($0,4)
-    idx = index(line, " -> ")
-    if (idx > 0) print substr(line, 1, idx-1)
-  }')
+DELETED_PATHS=()
+while IFS= read -r -d '' entry; do
+  x="${entry:0:1}"; y="${entry:1:1}"; path="${entry:3}"
+  # rename / copy は直後の NUL 区切りフィールドが旧パス (使わない場合も必ず読み進める)
+  if [ "$x" = "R" ] || [ "$y" = "R" ] || [ "$x" = "C" ] || [ "$y" = "C" ]; then
+    IFS= read -r -d '' orig || true
+    if [ "$x" = "R" ] || [ "$y" = "R" ]; then
+      DELETED_PATHS+=("$orig")
+    fi
+  fi
+  if [ "$x" = "D" ] || [ "$y" = "D" ]; then
+    DELETED_PATHS+=("$path")
+  fi
+done < <(git -C "$DIR" status --porcelain -z)
 
 # 復旧用 trap を .git 移動前に設定 (WORK_TMPDIR は後で設定されるため条件付き)
 WORK_TMPDIR=""
@@ -198,11 +207,11 @@ git -C "$DIR/bare.git" worktree add "../$BRANCH" "$BRANCH"
 cp -a "$WORK_TMPDIR/." "$DIR/$BRANCH/"
 
 # 未コミットの削除を worktree に再適用 (worktree add が HEAD 版を再作成するため)
-if [ -n "$DELETED_PATHS" ]; then
-  while IFS= read -r p; do
-    [ -n "$p" ] && rm -f "$DIR/$BRANCH/$p"
-  done <<< "$DELETED_PATHS"
-  echo "未コミットの削除 $(printf '%s\n' "$DELETED_PATHS" | wc -l | tr -d ' ') 件を再適用しました" >&2
+if [ ${#DELETED_PATHS[@]} -gt 0 ]; then
+  for p in "${DELETED_PATHS[@]}"; do
+    rm -f "$DIR/$BRANCH/$p"
+  done
+  echo "未コミットの削除 ${#DELETED_PATHS[@]} 件を再適用しました" >&2
 fi
 
 # 変換成功 — 復旧用 trap を解除

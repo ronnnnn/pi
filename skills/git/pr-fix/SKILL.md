@@ -66,11 +66,16 @@ MY_LOGIN=$(gh api user --jq '.login')
 # レビュースレッドの状態を確認 (GraphQL)
 # 注意: id (スレッド resolve 用) と databaseId (リアクション API 用) の両方を取得する
 # <owner>, <repo>, <number> は実際の値に置き換える
-gh api graphql -F query='
-query {
-  repository(owner: "<owner>", name: "<repo>") {
-    pullRequest(number: <number>) {
-      reviewThreads(first: 100) {
+# 100 スレッドを超える PR でも取りこぼさないよう --paginate で全ページを取得する
+# (--paginate は query に $endCursor 変数と pageInfo が必要)
+gh api graphql --paginate \
+  -F owner='<owner>' -F repo='<repo>' -F number=<number> \
+  -f query='
+query($owner: String!, $repo: String!, $number: Int!, $endCursor: String) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100, after: $endCursor) {
+        pageInfo { hasNextPage endCursor }
         nodes {
           id
           isResolved
@@ -191,16 +196,25 @@ query {
 git diff
 ```
 
-### 6. 変更のステージング
+### 6. 変更の分離とステージング
 
-本ワークフローで修正したファイルのみをステージングする。ユーザーが元々持っていた無関係な変更 (staged / unstaged / untracked) を巻き込まないよう、`git add -A` は使わない:
+本ワークフローで修正したファイルのみをコミット対象にする。ユーザーが元々持っていた無関係な変更 (staged / unstaged / untracked) を巻き込まないよう、`git add -A` は使わない。
+
+まず既存の staged 変更の有無を確認する:
 
 ```bash
-# レビュー修正で変更したファイルを個別に指定する
+git diff --cached --quiet && echo "staged なし" || echo "既存の staged 変更あり"
+```
+
+**既存の staged 変更がない場合:** 修正ファイルを個別にステージングする:
+
+```bash
 git add <修正したファイル 1> <修正したファイル 2> ...
 ```
 
-修正前からステージング済みだった無関係な変更がある場合は、index を上書きしないよう注意する (同一ファイルに既存の staged 変更がある場合はユーザーに確認する)。
+**既存の staged 変更がある場合:** `git add` → `git commit` では **index 全体がコミットされ、無関係な staged 変更も一緒に公開されてしまう**。この場合は `git add` を行わず、ステップ 9 で pathspec 指定のコミット (`git commit -- <修正ファイル>`) を使う。pathspec 指定のコミットは列挙したパスの内容のみをコミットし、他の staged エントリは index に残る。ステップ 7 の commit-proposer には「git diff HEAD -- <修正ファイル>」で差分を確認するよう prompt で指示する。
+
+いずれの場合も、同一ファイルにユーザーの無関係な未コミット変更が混在している場合は、コミット前にユーザーに確認する。
 
 ### 7. コミットメッセージの生成
 
@@ -259,10 +273,19 @@ subagent が変更差分の分析、commitlint 設定の確認、メッセージ
 
 ```bash
 # subject には実際の変更内容を記述する (「レビュー指摘に基づく修正」のような汎用表現は使わない)
+
+# 既存の staged 変更がない場合 (ステップ 6 でステージング済み)
 git commit -m "<type>(<scope>): <実際の変更内容>
 
 - [修正内容 1]
 - [修正内容 2]"
+
+# 既存の staged 変更がある場合 (pathspec 指定で修正ファイルのみをコミットし、
+# 無関係な staged 変更は index に残す)
+git commit -m "<type>(<scope>): <実際の変更内容>
+
+- [修正内容 1]
+- [修正内容 2]" -- <修正したファイル 1> <修正したファイル 2>
 ```
 
 ### 10. プッシュの実行

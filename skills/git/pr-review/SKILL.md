@@ -51,19 +51,25 @@ gh pr view --json number --jq '.number'
 gh pr view <number> -R <owner>/<repo> --json number,title,url,baseRefName,headRefName,headRefOid
 ```
 
+番号指定・引数なしの場合も、以降のコマンドで一貫して `-R` を使えるよう owner/repo を取得しておく:
+
+```bash
+gh repo view --json owner,name --jq '"\(.owner.login)/\(.name)"'
+```
+
 ```bash
 # PR 情報を取得 (headRefOid はコメント投稿時に必要)
-gh pr view <number> --json number,title,url,baseRefName,headRefName,headRefOid
+gh pr view <number> -R <owner>/<repo> --json number,title,url,baseRefName,headRefName,headRefOid
 ```
 
 ### 2. PR 差分の取得
 
 ```bash
-# PR の差分を取得
-gh pr diff <number>
+# PR の差分を取得 (確定した <owner>/<repo> を必ず -R に渡す。以降の全コマンドも同様)
+gh pr diff <number> -R <owner>/<repo>
 
 # 変更ファイル一覧
-gh pr diff <number> --name-only
+gh pr diff <number> -R <owner>/<repo> --name-only
 ```
 
 ### 3. アプローチ判定
@@ -74,10 +80,10 @@ gh pr diff <number> --name-only
 
 ```bash
 # 変更ファイル数
-gh pr diff <number> --name-only | wc -l
+gh pr diff <number> -R <owner>/<repo> --name-only | wc -l
 
 # 変更行数 (追加 + 削除)
-gh pr view <number> --json additions,deletions --jq '.additions + .deletions'
+gh pr view <number> -R <owner>/<repo> --json additions,deletions --jq '.additions + .deletions'
 ```
 
 #### 3-2. アプローチの選択
@@ -129,7 +135,7 @@ subagent({
 ## 手順
 
 ### 1. 差分の取得
-gh pr diff <number>
+gh pr diff <number> -R <owner>/<repo>
 
 ### 2. セキュリティ観点でのレビュー
 以下に集中してレビューする:
@@ -166,7 +172,7 @@ subagent({
 ## 手順
 
 ### 1. 差分の取得
-gh pr diff <number>
+gh pr diff <number> -R <owner>/<repo>
 
 ### 2. バグ・ロジック観点でのレビュー
 以下に集中してレビューする:
@@ -203,7 +209,7 @@ subagent({
 ## 手順
 
 ### 1. 差分の取得
-gh pr diff <number>
+gh pr diff <number> -R <owner>/<repo>
 
 ### 2. ベストプラクティス観点でのレビュー
 以下に集中してレビューする:
@@ -372,13 +378,18 @@ MCP が全て利用不可の場合は、パターン A / B のレビュー結果
 
 ```bash
 # レビューコメントを作成
-# commit_id にはステップ 1 で取得した headRefOid を使用
+# commit_id にはステップ 1 で取得した headRefOid を使用。
+# side は指摘対象の行が diff のどちら側にあるかで決める:
+#   追加・変更後の行 (+ 側) → side=RIGHT + head 側の行番号
+#   削除された行 (- 側。例: 削除コードの維持を求める指摘) → side=LEFT + base 側の行番号
+# side を誤ると API がコメントを拒否する。diff hunk のどちらにも位置付けられない
+# 指摘は下記の一般コメントにフォールバックする
 gh api repos/{owner}/{repo}/pulls/<number>/comments \
   -f body="コメント内容" \
   -f commit_id="<headRefOid>" \
   -f path="src/api/users.ts" \
   -F line=42 \
-  -f side="RIGHT"
+  -f side="RIGHT"   # 削除行への指摘は side="LEFT" + base 側の行番号
 ```
 
 **一般コメント:**
