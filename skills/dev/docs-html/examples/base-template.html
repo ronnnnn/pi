@@ -1,0 +1,405 @@
+<!doctype html>
+<html lang="ja" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title data-ja="ドキュメントタイトル" data-en="Document Title">ドキュメントタイトル</title>
+<script>
+  (function () {
+    try {
+      var saved = localStorage.getItem('theme');
+      var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      var theme = saved || (prefersDark ? 'dark' : 'light');
+      document.documentElement.setAttribute('data-theme', theme);
+    } catch (e) {}
+  })();
+</script>
+<style>
+  :root {
+    --bg: #faf9f5;
+    --surface: #ffffff;
+    --surface-2: #f4f1e8;
+    --border: #e3dacc;
+    --text: #141413;
+    --text-muted: #5b5a55;
+    --accent: #d97757;
+    --accent-fg: #ffffff;
+    --success: #3a7d4f;
+    --warning: #b87a14;
+    --danger: #b54a3c;
+    --info: #3a6fb8;
+    --code-bg: #f0eee6;
+    --code-text: #1f1f1d;
+    --shadow: 0 1px 2px rgba(0,0,0,.06), 0 8px 24px rgba(0,0,0,.04);
+    --serif: ui-serif, Georgia, "Times New Roman", Times, serif;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
+  }
+  [data-theme="dark"] {
+    --bg: #1a1a18;
+    --surface: #232320;
+    --surface-2: #2b2b27;
+    --border: #3a3a36;
+    --text: #f0eee6;
+    --text-muted: #b1afa6;
+    --accent: #f29670;
+    --accent-fg: #1a1a18;
+    --success: #6cc287;
+    --warning: #e6b25b;
+    --danger: #e08274;
+    --info: #7fb0f5;
+    --code-bg: #2a2a26;
+    --code-text: #ece9df;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.3);
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    transition: background-color .2s ease, color .2s ease;
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 32px 28px 96px; }
+
+  /* ── topbar ─────────────────────────── */
+  .topbar {
+    position: sticky; top: 0; z-index: 10;
+    background: color-mix(in srgb, var(--bg) 86%, transparent);
+    backdrop-filter: saturate(140%) blur(8px);
+    -webkit-backdrop-filter: saturate(140%) blur(8px);
+    border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 12px 28px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .brand {
+    font-family: var(--serif);
+    font-weight: 500;
+    font-size: 16px;
+    letter-spacing: -0.01em;
+    color: var(--text);
+  }
+  .grow { flex: 1; }
+  .icon-btn {
+    appearance: none;
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 10px;
+    height: 34px;
+    min-width: 34px;
+    font-family: var(--sans);
+    font-size: 13px;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    box-shadow: var(--shadow);
+    transition: transform .08s ease, background-color .15s ease;
+  }
+  .icon-btn:hover { background: var(--surface-2); }
+  .icon-btn:active { transform: translateY(1px); }
+  .icon-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .icon-sun { display: none; }
+  [data-theme="dark"] .icon-sun { display: inline; }
+  [data-theme="dark"] .icon-moon { display: none; }
+
+  /* ── content ─────────────────────────── */
+  header.hero {
+    padding: 56px 0 32px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 36px;
+  }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .eyebrow::before {
+    content: "";
+    width: 22px; height: 1.5px;
+    background: var(--accent);
+  }
+  h1 {
+    font-family: var(--serif);
+    font-weight: 500;
+    font-size: clamp(32px, 5vw, 52px);
+    line-height: 1.08;
+    letter-spacing: -0.018em;
+    margin: 0 0 12px;
+  }
+  h1 em { font-style: italic; color: var(--accent); }
+  h2 {
+    font-family: var(--serif);
+    font-size: 26px;
+    margin: 48px 0 12px;
+    letter-spacing: -0.01em;
+  }
+  h3 { font-size: 18px; margin: 28px 0 8px; }
+  p { margin: 12px 0; color: var(--text); }
+  .lede { color: var(--text-muted); font-size: 17px; max-width: 64ch; }
+
+  a { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+  a:hover { text-decoration-thickness: 2px; }
+
+  /* code */
+  code {
+    font-family: var(--mono);
+    background: var(--code-bg);
+    color: var(--code-text);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.92em;
+  }
+  pre {
+    background: var(--code-bg);
+    color: var(--code-text);
+    padding: 16px 18px;
+    border-radius: 10px;
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    font-family: var(--mono);
+    font-size: 13.5px;
+    line-height: 1.55;
+  }
+  pre code { background: transparent; padding: 0; }
+
+  /* callouts */
+  .callout {
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--info);
+    background: var(--surface);
+    border-radius: 10px;
+    padding: 14px 18px;
+    margin: 18px 0;
+    box-shadow: var(--shadow);
+  }
+  .callout.tip { border-left-color: var(--success); }
+  .callout.warn { border-left-color: var(--warning); }
+  .callout.danger { border-left-color: var(--danger); }
+  .callout strong { display: block; margin-bottom: 4px; font-size: 13px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); }
+
+  /* table */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--border); font-size: 14px; }
+  th { background: var(--surface-2); font-weight: 600; }
+  tr:last-child td { border-bottom: 0; }
+  tr:nth-child(even) td { background: color-mix(in srgb, var(--surface-2) 50%, var(--surface)); }
+
+  /* grid cards */
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 16px;
+    margin: 18px 0;
+  }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 18px;
+    box-shadow: var(--shadow);
+  }
+  .card h3 { margin: 0 0 6px; font-size: 16px; }
+  .card p { margin: 4px 0; color: var(--text-muted); font-size: 14px; }
+
+  /* footer */
+  footer.foot {
+    margin-top: 64px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: 13px;
+  }
+
+  /* responsive */
+  @media (max-width: 720px) {
+    .wrap { padding: 24px 18px 64px; }
+    .topbar-inner { padding: 10px 18px; }
+    header.hero { padding: 36px 0 24px; }
+    h2 { margin-top: 36px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+    html { scroll-behavior: auto; }
+  }
+</style>
+</head>
+<body>
+<div class="topbar" role="banner">
+  <div class="topbar-inner">
+    <span class="brand" data-ja="ドキュメント" data-en="Document">ドキュメント</span>
+    <span class="grow"></span>
+    <button id="lang-toggle" class="icon-btn" type="button"
+            aria-label="言語切替"
+            data-ja-aria-label="言語切替"
+            data-en-aria-label="Toggle language">
+      <span data-ja="EN" data-en="JA">EN</span>
+    </button>
+    <button id="theme-toggle" class="icon-btn" type="button"
+            aria-label="テーマ切替"
+            data-ja-aria-label="テーマ切替"
+            data-en-aria-label="Toggle theme">
+      <span class="icon" aria-hidden="true">
+        <svg class="icon-sun" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="4" fill="currentColor"/>
+          <path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/>
+        </svg>
+        <svg class="icon-moon" viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+          <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>
+        </svg>
+      </span>
+    </button>
+  </div>
+</div>
+
+<main class="wrap">
+  <header class="hero">
+    <div class="eyebrow" data-ja="ドキュメント" data-en="Document">ドキュメント</div>
+    <h1 data-ja="ここに日本語のタイトルが入る" data-en="English title goes here">ここに日本語のタイトルが入る</h1>
+    <p class="lede"
+       data-ja="このベーステンプレートは dark/light テーマ切替と日/英 言語切替を備えた、外部依存のない単一 HTML ファイルです。"
+       data-en="This base template is a single, self-contained HTML file with dark/light theme and JA/EN language toggles.">
+      このベーステンプレートは dark/light テーマ切替と日/英 言語切替を備えた、外部依存のない単一 HTML ファイルです。
+    </p>
+  </header>
+
+  <section>
+    <h2 data-ja="セクションの例" data-en="Section example">セクションの例</h2>
+    <p data-ja="ここに本文が入ります。" data-en="Body text goes here.">ここに本文が入ります。</p>
+
+    <div class="cards">
+      <div class="card">
+        <h3 data-ja="カード 1" data-en="Card 1">カード 1</h3>
+        <p data-ja="短い説明文。" data-en="A short description.">短い説明文。</p>
+      </div>
+      <div class="card">
+        <h3 data-ja="カード 2" data-en="Card 2">カード 2</h3>
+        <p data-ja="短い説明文。" data-en="A short description.">短い説明文。</p>
+      </div>
+      <div class="card">
+        <h3 data-ja="カード 3" data-en="Card 3">カード 3</h3>
+        <p data-ja="短い説明文。" data-en="A short description.">短い説明文。</p>
+      </div>
+    </div>
+
+    <div class="callout">
+      <strong data-ja="メモ" data-en="Note">メモ</strong>
+      <span data-ja="コールアウトはこのように表示されます。" data-en="Callouts look like this.">コールアウトはこのように表示されます。</span>
+    </div>
+
+    <pre><code>function hello(name) {
+  return `Hello, ${name}!`;
+}
+</code></pre>
+
+    <table>
+      <thead>
+        <tr>
+          <th data-ja="項目" data-en="Item">項目</th>
+          <th data-ja="説明" data-en="Description">説明</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td data-ja="A" data-en="A">A</td>
+          <td data-ja="サンプル 1" data-en="Sample 1">サンプル 1</td>
+        </tr>
+        <tr>
+          <td data-ja="B" data-en="B">B</td>
+          <td data-ja="サンプル 2" data-en="Sample 2">サンプル 2</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <footer class="foot">
+    <span data-ja="生成: docs-html skill" data-en="Generated by docs-html skill">生成: docs-html skill</span>
+  </footer>
+</main>
+
+<script>
+  // ── theme toggle ─────────────────────────
+  (function () {
+    const btn = document.getElementById('theme-toggle');
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+      const cur = document.documentElement.getAttribute('data-theme') || 'light';
+      const next = cur === 'light' ? 'dark' : 'light';
+      document.documentElement.setAttribute('data-theme', next);
+      try { localStorage.setItem('theme', next); } catch (e) {}
+    });
+  })();
+
+  // ── i18n toggle ─────────────────────────
+  (function () {
+    const REWRITE_ATTRS = ['aria-label', 'placeholder', 'title', 'alt'];
+
+    function applyLang(lang) {
+      document.documentElement.setAttribute('lang', lang);
+      // textContent
+      document.querySelectorAll('[data-ja], [data-en]').forEach(el => {
+        const v = el.getAttribute(`data-${lang}`);
+        if (v != null) el.textContent = v;
+      });
+      // attributes
+      REWRITE_ATTRS.forEach(attr => {
+        document.querySelectorAll(`[data-ja-${attr}], [data-en-${attr}]`).forEach(el => {
+          const v = el.getAttribute(`data-${lang}-${attr}`);
+          if (v != null) el.setAttribute(attr, v);
+        });
+      });
+      // block-level fallback
+      document.querySelectorAll('[data-lang]').forEach(el => {
+        el.hidden = el.getAttribute('data-lang') !== lang;
+      });
+    }
+
+    let saved = null;
+    try { saved = localStorage.getItem('lang'); } catch (e) {}
+    let cur = saved || document.documentElement.getAttribute('lang') || 'ja';
+    applyLang(cur);
+
+    const btn = document.getElementById('lang-toggle');
+    if (btn) {
+      btn.addEventListener('click', () => {
+        cur = cur === 'ja' ? 'en' : 'ja';
+        applyLang(cur);
+        try { localStorage.setItem('lang', cur); } catch (e) {}
+      });
+    }
+  })();
+</script>
+</body>
+</html>

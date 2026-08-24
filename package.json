@@ -1,0 +1,18 @@
+{
+  "name": "@ronnnnn/pi",
+  "version": "0.1.0",
+  "description": "A collection of pi skills and agents.",
+  "keywords": ["pi-package"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ronnnnn/pi"
+  },
+  "license": "MIT",
+  "author": {
+    "name": "ronnnnn",
+    "email": "xxxx.xyzs.xxxx@gmail.com"
+  },
+  "pi": {
+    "skills": ["./skills"]
+  }
+}
