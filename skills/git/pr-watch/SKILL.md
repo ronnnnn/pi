@@ -1,6 +1,6 @@
 ---
 name: pr-watch
-description: PR のレビューコメントと CI 失敗を監視し、ユーザー確認なしで自動で修正・コミット・プッシュ・返信を行う。bash の run_in_background + notify_on によるイベント駆動監視 (最大 60 分) で、pr-fix と pr-ci を統合し自律実行する。Use when PR の監視、自動修正、ウォッチを求められた際に使用する。
+description: PR のレビューコメント (inline コメントを伴わないレビュー本文を含む) と CI 失敗を監視し、ユーザー確認なしで自動で修正・コミット・プッシュ・返信を行う。bash の run_in_background + notify_on によるイベント駆動監視 (最大 60 分) で、pr-fix と pr-ci を統合し自律実行する。Use when PR の監視、自動修正、ウォッチを求められた際に使用する。
 ---
 
 # PR 監視・自動修正ワークフロー
@@ -17,7 +17,7 @@ PR のレビューコメントと CI 失敗を監視し、検出次第自動で�
 4. **コミットメッセージは commit-proposer subagent で生成する** - Conventional Commits / commitlint 設定に準拠
 5. **コミットメッセージ・返信コメントの言語は対象リポジトリに従う** - 既存の PR やコミット履歴を確認し、使用されている言語に合わせる
 6. **日本語でコミットメッセージ・返信コメントを書く場合は japanese-text-style スキルに従う** - `../japanese-text-style/SKILL.md` を read して適用する
-7. **対応不要と判断したレビューコメントは理由を返信して resolve する**
+7. **対応不要と判断した指摘にも理由を返信して対応済みにする** - inline スレッドは理由を返信して resolve する。inline コメントを伴わないレビュー本文 (review body) はスレッドが存在しないため resolve せず、PR コメントで返信して 👍 リアクションで対応済みマークを付ける
 8. **コンフリクトを検出したら自動で解消して監視を継続する**
 9. **修正で PR の実態が変わった場合のみ、タイトル・description を自動更新する** - 軽微な修正 (typo、lint、フォーマット) では更新しない。テンプレートや既存フォーマットを維持する
 10. **ポーリングを実装しない** - イベント検知は `notify_on` の push 通知に任せる。agent 自身が sleep ループやサイクル駆動でイベントを取りに行く実装は行わない
@@ -39,6 +39,7 @@ PR のレビューコメントと CI 失敗を監視し、検出次第自動で�
 | イベント                             | 意味                                                      | 対応                        |
 | ------------------------------------ | --------------------------------------------------------- | --------------------------- |
 | `NEW_REVIEWS\|thread_id1,thread_id2` | 新しい未解決レビュースレッドを検出                        | レビュー修正を実行 (3a)     |
+| `NEW_REVIEW_BODIES\|review_id1,review_id2` | 新しい未対応のレビュー本文 (inline コメントを伴わない review body。inline コメント付きレビューの本文はスレッド側で対応するため除外) を検出 | レビュー修正を実行 (3a)     |
 | `CI_FAIL\|check1,check2`             | CI 失敗を検出 (全 check 完了後、失敗 check の識別子)        | CI 修正を実行 (3b)          |
 | `PR_MERGED`                          | PR がマージされた                                         | 監視終了 → 完了報告 (4)     |
 | `PR_CLOSED`                          | PR がクローズされた                                       | 監視終了 → 完了報告 (4)     |
@@ -59,6 +60,9 @@ PR のレビューコメントと CI 失敗を監視し、検出次第自動で�
 - `CI_COMMITS`: CI 修正コミット数
 - `REPLIED_COMMENTS`: 返信済みコメント数
 - `RESOLVED_THREADS`: resolve 済みスレッド数
+- `HANDLED_REVIEW_BODIES`: 対応済みレビュー本文数 (👍 マーク済み)
+- `PENDING_REVIEW_REPLIES`: レビュー本文への返信投稿に失敗した review_id のリスト (返信から再試行する)
+- `PENDING_REVIEW_MARKS`: 返信は成功したが 👍 マークに失敗した review_id のリスト (👍 のみ再試行する。返信は重複するため再投稿しない)
 - `PR_UPDATES`: PR タイトル・description の更新回数
 - `CONFLICT_RESOLVES`: コンフリクト解消回数
 - `RE_REQUESTED_REVIEWERS`: レビュー再リクエスト済みユーザーのリスト
@@ -124,7 +128,7 @@ set -uo pipefail
 OWNER="<OWNER>"; REPO="<REPO>"; PR_NUMBER=<PR_NUMBER>; MY_LOGIN="<MY_LOGIN>"
 START=$(date +%s)
 IDLE_LIMIT=1800; ABS_LIMIT=3600
-PREV_THREADS=""; PREV_FAILS=""; PREV_SHA=""
+PREV_THREADS=""; PREV_REVIEWS=""; PREV_FAILS=""; PREV_SHA=""
 HAD_ACT=false; API_ERRORS=0; PREV_CONFLICT=false
 
 while true; do
@@ -160,7 +164,9 @@ while true; do
     fi
 
     # 未解決レビュースレッド取得。変化検知は先頭 100 スレッドで行う
-    # (100 超の取りこぼしは 3a 側の --paginate 付き詳細取得が拾う)
+    # (スレッドの 100 超の取りこぼしは 3a 側の --paginate 付き詳細取得が拾う。
+    # レビュー本文はイベント発行自体がここでの検知に依存するため、
+    # 後続の専用ループで全ページを走査する)
     TJ=$(gh api graphql -f query='
       query {
         repository(owner: "'"$OWNER"'", name: "'"$REPO"'") {
@@ -201,6 +207,73 @@ while true; do
         [ -n "$NEW_T" ] && echo "NEW_REVIEWS|$NEW_T" && HAD_ACT=true
       fi
       PREV_THREADS="$CT"
+
+      # 未対応レビュー本文の抽出 (inline コメントを伴わない review body。
+      # body あり・author あり・自分以外・inline コメント 0 件・👍 未付与)
+      # reviews は作成日時の昇順のため last: 100 で最新側から取得し、
+      # hasPreviousPage が true の間 before で後方ページングして全件走査する
+      # (通常は 1 ページで完了。👍 マーク済みは除外されるため全走査でも重複対応しない)
+      RV=""; RV_BEFORE=""; RV_FAIL=false
+      while :; do
+        if [ -n "$RV_BEFORE" ]; then
+          RV_ARGS='last: 100, before: "'"$RV_BEFORE"'"'
+        else
+          RV_ARGS='last: 100'
+        fi
+        RJ=$(gh api graphql -f query='
+          query {
+            repository(owner: "'"$OWNER"'", name: "'"$REPO"'") {
+              pullRequest(number: '"$PR_NUMBER"') {
+                reviews('"$RV_ARGS"') {
+                  pageInfo { hasPreviousPage startCursor }
+                  nodes {
+                    id
+                    state
+                    body
+                    author { login }
+                    comments(first: 1) { totalCount }
+                    reactionGroups { content viewerHasReacted }
+                  }
+                }
+              }
+            }
+          }' 2>/dev/null) || { RV_FAIL=true; break; }
+
+        PAGE_RV=$(echo "$RJ" | jq -r --arg m "$MY_LOGIN" \
+          '[.data.repository.pullRequest.reviews.nodes[]
+            | select(.state != "PENDING" and .state != "DISMISSED")
+            | select(.body != null and .body != "")
+            | select(.author != null)
+            | select(.author.login != $m)
+            | select(.comments.totalCount == 0)
+            | select(([.reactionGroups[]? | select(.content == "THUMBS_UP" and .viewerHasReacted)] | length) == 0)
+            | .id] | join(",")')
+        [ -n "$PAGE_RV" ] && RV="${RV:+$RV,}$PAGE_RV"
+
+        HAS_PREV=$(echo "$RJ" | jq -r '.data.repository.pullRequest.reviews.pageInfo.hasPreviousPage')
+        RV_BEFORE=$(echo "$RJ" | jq -r '.data.repository.pullRequest.reviews.pageInfo.startCursor')
+        [ "$HAS_PREV" != "true" ] && break
+      done
+
+      if [ "$RV_FAIL" = true ]; then
+        API_FAIL=true
+      else
+        # ID を正規化 (ソート) してスナップショットと比較する
+        RV=$(echo "$RV" | tr ',' '\n' | grep -v '^$' | sort | paste -sd, - || true)
+        # 新規レビュー本文を抽出 (PREV_REVIEWS に含まれない ID)
+        if [ -n "$RV" ]; then
+          NEW_R=""
+          IFS=',' read -ra RV_ARR <<< "$RV"
+          for rid in "${RV_ARR[@]}"; do
+            case ",$PREV_REVIEWS," in
+              *",$rid,"*) ;; # 既知
+              *) NEW_R="${NEW_R:+$NEW_R,}$rid" ;;
+            esac
+          done
+          [ -n "$NEW_R" ] && echo "NEW_REVIEW_BODIES|$NEW_R" && HAD_ACT=true
+        fi
+        PREV_REVIEWS="$RV"
+      fi
     fi
 
     # CI ステータスチェック。Actions の workflow run だけでなく GitHub Apps の
@@ -258,7 +331,7 @@ done
 bash({
   command: "bash /tmp/pr-monitor-<PR_NUMBER>.sh",
   run_in_background: true,
-  notify_on: "^(NEW_REVIEWS|CI_FAIL|PR_MERGED|PR_CLOSED|PR_CONFLICT|TIMEOUT_IDLE|TIMEOUT_ABS)"
+  notify_on: "^(NEW_REVIEWS|NEW_REVIEW_BODIES|CI_FAIL|PR_MERGED|PR_CLOSED|PR_CONFLICT|TIMEOUT_IDLE|TIMEOUT_ABS)"
 })
 ```
 
@@ -282,15 +355,15 @@ push されたイベント行の種類に応じて、対応するサブセクシ
 
 **注意:** イベント対応の作業中に届いた新しいイベント行も、作業完了後に順次処理する。background shell はユーザーの interrupt では停止しないため、監視を途中でやめたい場合は `kill_shell` で明示的に停止する。
 
-#### 3a. NEW_REVIEWS イベント
+#### 3a. NEW_REVIEWS / NEW_REVIEW_BODIES イベント
 
-通知に含まれるスレッド ID を処理対象とする。
+通知に含まれるスレッド ID・レビュー ID を処理対象とする。レビュー本文に複数の指摘が含まれる場合は指摘ごとに分解して判断する。
 
-**重複排除:** 監視スクリプトの `PREV_THREADS` で重複排除済み。イベントハンドラ側での追加フィルタは不要。
+**重複排除:** 監視スクリプトの `PREV_THREADS` / `PREV_REVIEWS` で重複排除済み。イベントハンドラ側での追加フィルタは不要。
 
 **詳細取得:**
 
-処理対象のスレッドについて、完全なコメント情報を取得する:
+処理対象のスレッドについて、完全なコメント情報を取得する。処理対象にレビュー本文が含まれる場合は、pr-fix スキルのステップ 2 と同じ `reviews(last: 100, before: $before)` クエリ (id・databaseId・state・body・url・author・comments.totalCount・reactionGroups) で本文とメタ情報も取得する。レビューが 100 件を超える PR では `pageInfo.hasPreviousPage` が true の間 `startCursor` を `before` に渡して前のページも取得する:
 
 ```bash
 # <owner>, <repo>, <number> は実際の値に置き換える
@@ -423,7 +496,50 @@ query($owner: String!, $repo: String!, $number: Int!, $endCursor: String) {
    }'
    ```
 
-**処理順序:** リアクション追加 → 返信投稿 → resolve。エラーが発生しても続行し、失敗を記録する。
+**レビュー本文への対応 (スレッドが存在しない場合):** スレッド返信・resolve の代わりに、PR コメントで返信して 👍 リアクションで対応済みマークを付ける (マークを付けないと次回セッションで再処理されるため必須)。
+
+信頼できないレビュー本文を含むため、シェルを介さず write tool で返信本文を一時ファイルに書き出し、`--body-file` でそのパスを渡す。シェル補間 (`--body "..."`) や heredoc は、本文中の `$()`・バッククォート・デリミタと同一の行によってローカルでコマンド実行され得るため使用しない。
+
+まず write tool で `/tmp/pr-<number>-review-reply-<review_databaseId>.md` に以下の形式で書き出す:
+
+```markdown
+@<reviewer>
+
+> <元のレビュー本文の引用 (長い場合は要約)>
+
+<返信本文>
+```
+
+次に書き出したファイルのパスを渡して投稿し、👍 リアクションで対応済みマークを付ける:
+
+```bash
+# 返信: PR コメントとして投稿
+gh pr comment <number> --body-file /tmp/pr-<number>-review-reply-<review_databaseId>.md
+
+# 対応済みマーク: レビュー本文に 👍 リアクションを追加 (GraphQL mutation)
+# REST の reactions API はレビュー本文に対応していないため GraphQL を使用する
+gh api graphql \
+  -f subjectId='<review_id>' \
+  -f query='
+mutation($subjectId: ID!) {
+  addReaction(input: {subjectId: $subjectId, content: THUMBS_UP}) {
+    reaction { content }
+  }
+}'
+```
+
+**処理順序:**
+
+- **スレッド:** 元コメントに +1 リアクション追加 → スレッドに返信投稿 → resolve
+- **レビュー本文:** PR コメントで返信投稿 → レビュー本文に 👍 リアクション追加 (対応済みマーク)
+
+エラーが発生しても続行し、失敗を記録する。
+
+**失敗時の再試行 (レビュー本文):** スナップショット (`PREV_REVIEWS`) は検知済みを記録するだけで処理の完了を保証しないため、返信と 👍 マークの成否を個別に追跡する:
+
+- 返信投稿に失敗した場合: `PENDING_REVIEW_REPLIES` に review_id を追加し、以降のイベント処理の末尾で返信から再試行する
+- 返信は成功したが 👍 マークに失敗した場合: `PENDING_REVIEW_MARKS` に review_id を追加し、以降のイベント処理の末尾で 👍 マークのみ再試行する (返信を再投稿すると重複するため投稿しない)
+- 再試行に成功したら各リストから削除する。監視終了時 (3e) に残っている場合は最後にもう一度再試行し、なお失敗する場合は完了報告に記載する (👍 マーク未付与のままだと次回セッションで重複返信されるため、手動での対応済みマークを依頼する)
 
 **返信テンプレート:**
 
@@ -451,13 +567,13 @@ ref: https://go.dev/ref/spec#Index_expressions
 現状のままとさせてください。
 ```
 
-カウンタを更新: `REVIEW_COMMITS`, `REPLIED_COMMENTS`, `RESOLVED_THREADS`。
+カウンタを更新: `REVIEW_COMMITS`, `REPLIED_COMMENTS`, `RESOLVED_THREADS`, `HANDLED_REVIEW_BODIES`。
 
 **レビュー再リクエスト:**
 
-返信・resolve の完了後、対応したスレッドの投稿者に対してレビューの再リクエストを送信する。
+返信・resolve の完了後、対応したスレッド・レビュー本文の投稿者に対してレビューの再リクエストを送信する。
 
-1. 返信・resolve したスレッドの投稿者 (最初のコメントの `author.login`) を重複なしで収集する
+1. 返信・resolve したスレッドの投稿者 (最初のコメントの `author.login`) と、対応したレビュー本文の投稿者を重複なしで収集する
 2. PR のレビュー一覧を取得し、再リクエスト対象の判定に必要な情報 (ユーザー種別・レビュー状態) を収集する:
 
    ```bash
@@ -620,7 +736,8 @@ ref: https://go.dev/ref/spec#Index_expressions
 `PR_MERGED`, `PR_CLOSED`, `TIMEOUT_IDLE`, `TIMEOUT_ABS` を受信した場合:
 
 1. `kill_shell` で `SHELL_ID` の監視 shell を停止する (スクリプトが既に exit 済みの場合もあるが、念のため実行する)
-2. 完了報告 (ステップ 4) に進む
+2. `PENDING_REVIEW_REPLIES` / `PENDING_REVIEW_MARKS` に残っている review_id があれば最後にもう一度再試行し、なお失敗する場合は完了報告に記載する
+3. 完了報告 (ステップ 4) に進む
 
 ### 4. 監視終了・完了報告
 
@@ -634,6 +751,8 @@ ref: https://go.dev/ref/spec#Index_expressions
 - 修正コミット数: X
 - 返信済みコメント数: Y
 - resolve 済みスレッド数: Z
+- 対応済みレビュー本文数: W (👍 マーク済み。0 の場合は省略)
+- 返信・👍 マークに失敗したレビュー本文: (該当する場合のみ review URL と失敗内容を記載)
 - レビュー再リクエスト: L 人 (該当がない場合は省略)
 
 ### CI 修正
