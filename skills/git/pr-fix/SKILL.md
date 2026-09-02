@@ -1,6 +1,6 @@
 ---
 name: pr-fix
-description: PR のレビューコメントに基づいて修正を行う。未解決コメントのみを対象とし (自分のコメントは除外)、妥当性を判断して修正する。コミット・返信前にユーザー承認を取る。Use when PR のレビュー指摘を修正したい、レビューコメントに対応したい際に使用する。
+description: PR のレビューコメントに基づいて修正を行う。未解決のインラインコメントに加え、inline コメントを伴わないレビュー本文 (review body) も対象とし (自分のコメント・レビューは除外)、妥当性を判断して修正する。コミット・返信前にユーザー承認を取る。Use when PR のレビュー指摘を修正したい、レビューコメントに対応したい際に使用する。
 ---
 
 # PR レビュー修正ワークフロー
@@ -9,7 +9,7 @@ PR のレビューコメントを確認し、必要な修正を行う。引数�
 
 ## 重要な原則
 
-1. **未解決 (unresolved) のコメントのみを対象とする (自分のコメントは除外)**
+1. **未解決 (unresolved) のインラインコメントと、未対応のレビュー本文 (inline コメントを伴わない review body) を対象とする (自分のコメント・レビューは除外)** - レビュー本文は自分が 👍 リアクションを付けたものを対応済みとみなす
 2. **レビューの妥当性を判断し、修正が必要なもののみ修正する**
 3. **コミット前に必ずユーザーの承認を取る** - 自動でコミットしない。承認確認には question tool を使用する
 4. **返信コメント前に必ずユーザーの承認を取る** - 自動で返信を投稿しない
@@ -25,7 +25,7 @@ PR のレビューコメントを確認し、必要な修正を行う。引数�
 
 ```
 todo({ action: "add", text: "PR の特定: 引数または現在のブランチから PR を特定" })
-todo({ action: "add", text: "未解決のレビューコメントを取得: GraphQL で isResolved: false のスレッドを取得" })
+todo({ action: "add", text: "未対応のレビューを取得: GraphQL で isResolved: false のスレッドと未対応のレビュー本文 (review body) を取得" })
 todo({ action: "add", text: "レビューコメントの分析とファクトチェック: 各コメントの妥当性を判断し、技術的主張をファクトチェック" })
 todo({ action: "add", text: "修正計画の提示: ユーザーに修正計画の承認を求める" })
 todo({ action: "add", text: "コード修正の実行: 承認された修正を適用" })
@@ -57,7 +57,7 @@ gh pr list --head $(git branch --show-current) --json number,title,state --jq '.
 gh pr view --json number --jq '.number'
 ```
 
-### 2. 未解決のレビューコメントを取得
+### 2. 未対応のレビューを取得
 
 ```bash
 # 自分の GitHub ユーザー名を取得 (自分のコメントを除外するため)
@@ -95,22 +95,66 @@ query($owner: String!, $repo: String!, $number: Int!, $endCursor: String) {
 }'
 ```
 
-**フィルタ条件:**
+続けて、inline コメントに紐づかないレビュー本文 (PR 画面で `#pullrequestreview-<id>` として表示される review body) を取得する:
+
+```bash
+# レビュー本文を取得 (GraphQL)
+# reviews は作成日時の昇順で返るため、最新側を優先する last: 100 を使用する
+# レビューが 100 件を超える PR では pageInfo.hasPreviousPage を確認し、
+# startCursor を before に渡して前のページも取得して全件確認する
+gh api graphql \
+  -F owner='<owner>' -F repo='<repo>' -F number=<number> \
+  -f query='
+query($owner: String!, $repo: String!, $number: Int!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      reviews(last: 100) {
+        pageInfo { hasPreviousPage startCursor }
+        nodes {
+          id
+          databaseId
+          state
+          body
+          url
+          author { login }
+          comments(first: 1) { totalCount }
+          reactionGroups { content viewerHasReacted }
+        }
+      }
+    }
+  }
+}'
+```
+
+**フィルタ条件 (インラインコメント):**
 
 取得した `reviewThreads.nodes` に対して以下の条件でフィルタする:
 
 1. `isResolved == false` のスレッドのみを対象とする
 2. スレッドの最初のコメント (`comments.nodes[0].author.login`) が `MY_LOGIN` と一致するスレッドは除外する (自分によるコメントには返信・resolve しない)
 
+**フィルタ条件 (レビュー本文):**
+
+取得した `reviews.nodes` に対して以下の条件でフィルタする:
+
+1. `state` が `PENDING` または `DISMISSED` のレビューは除外する
+2. `body` が空のレビューは除外する (本文なしの approve / comment 等)
+3. `author` が null のレビューは除外する (削除ユーザー等。返信時のメンション先が存在しないため)
+4. `author.login` が `MY_LOGIN` と一致するレビューは除外する
+5. `comments.totalCount > 0` (inline コメントを伴うレビュー) は除外する (指摘の実体は inline スレッド側で対応するため。二重返信を防ぐ)
+6. 自分が 👍 リアクション済み (`reactionGroups` の `content == "THUMBS_UP"` かつ `viewerHasReacted == true`) のレビューは対応済みとして除外する
+
 ### 3. レビューコメントの分析とファクトチェック
 
-各未解決コメントについて、以下を判断する:
+各未解決コメント・未対応のレビュー本文について、以下を判断する。レビュー本文に複数の指摘が含まれる場合は指摘ごとに分解して判断する:
 
 | 判断カテゴリ   | 対応                   |
 | -------------- | ---------------------- |
 | **修正が必要** | コードを修正する       |
 | **議論が必要** | ユーザーに確認を求める |
 | **対応不要**   | 理由を説明して resolve |
+
+**レビュー本文の場合:** スレッドが存在しないため、上表の resolve は行わない。いずれの判断カテゴリでも PR コメントで返信し、👍 リアクションで対応済み扱いとする (詳細はステップ 12・13)。
 
 **妥当性判断の基準:**
 
@@ -151,6 +195,8 @@ query($owner: String!, $repo: String!, $number: Int!, $endCursor: String) {
 分析結果をユーザーに提示し、question tool で承認を求める:
 
 **レビューコメントの翻訳:** 引用するレビューコメントが英語の場合は、日本語に翻訳して表示する。原文を併記する必要はなく、翻訳後の日本語のみを表示する。
+
+**レビュー本文の表示:** インラインコメントは `[path/to/file.ts:42]`、レビュー本文は `[レビュー本文]` として表示する。
 
 ```
 ## レビューコメント分析結果
@@ -298,7 +344,9 @@ git push
 
 ### 11. 返信コメントの作成
 
-各レビューコメントへの返信を作成する。
+各レビューコメント・レビュー本文への返信を作成する。
+
+**レビュー本文への返信:** レビュー本文にはスレッド返信 API が存在しないため、PR コメント (issue comment) として返信する。レビュワーへのメンションと元のレビュー本文の引用を含める。
 
 **返信テンプレート:**
 
@@ -361,6 +409,8 @@ ref: https://react.dev/reference/react/useEffect#removing-unnecessary-object-dep
 | 対応不要と判断         | ✅           |
 | 議論継続中             | ❌           |
 
+**レビュー本文の場合:** スレッドが存在しないため resolve は行わない。代わりに対応完了 (修正完了または対応不要の返信済み) のレビュー本文へ 👍 リアクションを追加して対応済みマークとする。承認確認では「👍 マーク予定」として提示する。
+
 ### 13. 返信の投稿・スレッド resolve
 
 承認後、リアクション追加・返信投稿・スレッド resolve を実行する。
@@ -391,6 +441,39 @@ mutation($threadId: ID!, $body: String!) {
 }'
 ```
 
+**レビュー本文への対応 (スレッドが存在しない場合):**
+
+信頼できないレビュー本文を含むため、シェルを介さず write tool で返信本文を一時ファイルに書き出し、`--body-file` でそのパスを渡す。シェル補間 (`--body "..."`) や heredoc は、本文中の `$()`・バッククォート・デリミタと同一の行によってローカルでコマンド実行され得るため使用しない。
+
+まず write tool で `/tmp/pr-<number>-review-reply-<review_databaseId>.md` に以下の形式で書き出す:
+
+```markdown
+@<reviewer>
+
+> <元のレビュー本文の引用 (長い場合は要約)>
+
+<返信本文>
+```
+
+次に書き出したファイルのパスを渡して投稿し、👍 リアクションで対応済みマークを付ける:
+
+```bash
+# 返信: PR コメントとして投稿
+gh pr comment <number> --body-file /tmp/pr-<number>-review-reply-<review_databaseId>.md
+
+# 対応済みマーク: レビュー本文に 👍 リアクションを追加 (GraphQL mutation)
+# REST の reactions API はレビュー本文に対応していないため GraphQL を使用する
+# <review_id> はステップ 2 で取得した reviews の id (GraphQL node ID) を使用
+gh api graphql \
+  -f subjectId='<review_id>' \
+  -f query='
+mutation($subjectId: ID!) {
+  addReaction(input: {subjectId: $subjectId, content: THUMBS_UP}) {
+    reaction { content }
+  }
+}'
+```
+
 **ユーザーが resolve を承認した場合:**
 
 ```bash
@@ -412,7 +495,8 @@ mutation($threadId: ID!) {
 1. 元のコメントに 👍 リアクションを追加 (`databaseId` を使用)
 2. スレッドに返信を投稿 (`id` (GraphQL node ID) を使用)
 3. resolve を実行 (承認された場合のみ、`id` を使用)
-4. エラーが発生した場合は続行し、完了報告で失敗したスレッドを報告
+4. レビュー本文への返信を PR コメントとして投稿し、対応完了したものに 👍 リアクションを追加 (`review_id` を使用。👍 マークに失敗した場合は再試行し、なお失敗する場合は完了報告に記載して手動での対応済みマークを依頼する。未マークのままだと次回実行で重複返信されるため)
+5. エラーが発生した場合は続行し、完了報告で失敗したスレッド・レビューを報告
 
 ### 14. レビュー再リクエスト
 
@@ -420,7 +504,7 @@ mutation($threadId: ID!) {
 
 **手順:**
 
-1. ステップ 13 で返信・resolve したスレッドの投稿者 (最初のコメントの `author.login`) を重複なしで収集する
+1. ステップ 13 で返信・resolve したスレッドの投稿者 (最初のコメントの `author.login`) と、対応したレビュー本文の投稿者を重複なしで収集する
 2. PR のレビュー一覧を取得し、再リクエスト対象の判定に必要な情報 (ユーザー種別・レビュー状態) を収集する:
 
    ```bash
@@ -457,6 +541,7 @@ mutation($threadId: ID!) {
 - 修正ファイル数: N
 - 返信済みコメント数: M
 - resolve 済みスレッド数: K
+- 対応済みレビュー本文数: R (👍 マーク済み。0 の場合は省略)
 - レビュー再リクエスト: L 人 (対象: @user1, @user2)
 
 PR URL: <url>
@@ -486,10 +571,10 @@ PR URL: <url>
 
 GitHub MCP server が構成されていれば `mcp` tool 経由でフォールバックする (PR 情報取得、コメント取得)。構成されていない場合はユーザーに gh CLI のセットアップを案内する。
 
-### 未解決コメントがない場合
+### 未解決コメント・未対応レビュー本文がない場合
 
 ```
-未解決のレビューコメントはありません。
+未解決のレビューコメント・未対応のレビュー本文はありません。
 ```
 
 ### コンフリクトがある場合
