@@ -100,15 +100,16 @@ query($owner: String!, $repo: String!, $number: Int!, $endCursor: String) {
 ```bash
 # レビュー本文を取得 (GraphQL)
 # reviews は作成日時の昇順で返るため、最新側を優先する last: 100 を使用する
-# レビューが 100 件を超える PR では pageInfo.hasPreviousPage を確認し、
-# startCursor を before に渡して前のページも取得して全件確認する
+# レビューが 100 件を超える PR では pageInfo.hasPreviousPage が true の間、
+# startCursor を -f before='<startCursor>' で渡して繰り返し実行し、
+# 前のページも取得して全件確認する (初回は before を渡さない)
 gh api graphql \
   -F owner='<owner>' -F repo='<repo>' -F number=<number> \
   -f query='
-query($owner: String!, $repo: String!, $number: Int!) {
+query($owner: String!, $repo: String!, $number: Int!, $before: String) {
   repository(owner: $owner, name: $repo) {
     pullRequest(number: $number) {
-      reviews(last: 100) {
+      reviews(last: 100, before: $before) {
         pageInfo { hasPreviousPage startCursor }
         nodes {
           id
@@ -154,7 +155,7 @@ query($owner: String!, $repo: String!, $number: Int!) {
 | **議論が必要** | ユーザーに確認を求める |
 | **対応不要**   | 理由を説明して resolve |
 
-**レビュー本文の場合:** スレッドが存在しないため、上表の resolve は行わない。いずれの判断カテゴリでも PR コメントで返信し、👍 リアクションで対応済み扱いとする (詳細はステップ 12・13)。
+**レビュー本文の場合:** スレッドが存在しないため、上表の resolve は行わない。「修正が必要」「対応不要」の場合は PR コメントで返信し、👍 リアクションで対応済み扱いとする。「議論が必要」(議論継続中) の場合は返信のみとし、👍 マークは付けない (マークすると以降の実行で検出されなくなるため、議論完了後に付ける)。詳細はステップ 12・13。
 
 **妥当性判断の基準:**
 
@@ -196,7 +197,7 @@ query($owner: String!, $repo: String!, $number: Int!) {
 
 **レビューコメントの翻訳:** 引用するレビューコメントが英語の場合は、日本語に翻訳して表示する。原文を併記する必要はなく、翻訳後の日本語のみを表示する。
 
-**レビュー本文の表示:** インラインコメントは `[path/to/file.ts:42]`、レビュー本文は `[レビュー本文]` として表示する。
+**レビュー本文の表示:** インラインコメントは `[path/to/file.ts:42]`、レビュー本文は `[レビュー本文 #<review_databaseId>]` として表示する (複数のレビュー本文がある場合でも一意に識別できるようにする)。
 
 ```
 ## レビューコメント分析結果
@@ -409,7 +410,7 @@ ref: https://react.dev/reference/react/useEffect#removing-unnecessary-object-dep
 | 対応不要と判断         | ✅           |
 | 議論継続中             | ❌           |
 
-**レビュー本文の場合:** スレッドが存在しないため resolve は行わない。代わりに対応完了 (修正完了または対応不要の返信済み) のレビュー本文へ 👍 リアクションを追加して対応済みマークとする。承認確認では「👍 マーク予定」として提示する。
+**レビュー本文の場合:** スレッドが存在しないため resolve は行わない。代わりに対応完了 (修正完了または対応不要の返信済み) のレビュー本文へ 👍 リアクションを追加して対応済みマークとする。議論継続中のレビュー本文は返信のみとし、👍 マークは付けない (resolve 対象外のスレッドと同様の扱い)。承認確認では「👍 マーク予定」「返信のみ」を区別して提示する。
 
 ### 13. 返信の投稿・スレッド resolve
 

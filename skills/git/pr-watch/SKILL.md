@@ -163,9 +163,10 @@ while true; do
       PREV_FAILS=""
     fi
 
-    # 未解決レビュースレッド・レビュー本文取得。変化検知は先頭 100 スレッドで行う
-    # (100 超の取りこぼしは 3a 側の --paginate 付き詳細取得が拾う。
-    # reviews は作成日時の昇順のため last: 100 で最新側を優先する)
+    # 未解決レビュースレッド取得。変化検知は先頭 100 スレッドで行う
+    # (スレッドの 100 超の取りこぼしは 3a 側の --paginate 付き詳細取得が拾う。
+    # レビュー本文はイベント発行自体がここでの検知に依存するため、
+    # 後続の専用ループで全ページを走査する)
     TJ=$(gh api graphql -f query='
       query {
         repository(owner: "'"$OWNER"'", name: "'"$REPO"'") {
@@ -178,16 +179,6 @@ while true; do
                   totalCount
                   nodes { author { login } }
                 }
-              }
-            }
-            reviews(last: 100) {
-              nodes {
-                id
-                state
-                body
-                author { login }
-                comments(first: 1) { totalCount }
-                reactionGroups { content viewerHasReacted }
               }
             }
           }
@@ -219,29 +210,70 @@ while true; do
 
       # 未対応レビュー本文の抽出 (inline コメントを伴わない review body。
       # body あり・author あり・自分以外・inline コメント 0 件・👍 未付与)
-      RV=$(echo "$TJ" | jq -r --arg m "$MY_LOGIN" \
-        '[.data.repository.pullRequest.reviews.nodes[]
-          | select(.state != "PENDING" and .state != "DISMISSED")
-          | select(.body != null and .body != "")
-          | select(.author != null)
-          | select(.author.login != $m)
-          | select(.comments.totalCount == 0)
-          | select(([.reactionGroups[]? | select(.content == "THUMBS_UP" and .viewerHasReacted)] | length) == 0)
-          | .id] | sort | join(",")')
+      # reviews は作成日時の昇順のため last: 100 で最新側から取得し、
+      # hasPreviousPage が true の間 before で後方ページングして全件走査する
+      # (通常は 1 ページで完了。👍 マーク済みは除外されるため全走査でも重複対応しない)
+      RV=""; RV_BEFORE=""; RV_FAIL=false
+      while :; do
+        if [ -n "$RV_BEFORE" ]; then
+          RV_ARGS='last: 100, before: "'"$RV_BEFORE"'"'
+        else
+          RV_ARGS='last: 100'
+        fi
+        RJ=$(gh api graphql -f query='
+          query {
+            repository(owner: "'"$OWNER"'", name: "'"$REPO"'") {
+              pullRequest(number: '"$PR_NUMBER"') {
+                reviews('"$RV_ARGS"') {
+                  pageInfo { hasPreviousPage startCursor }
+                  nodes {
+                    id
+                    state
+                    body
+                    author { login }
+                    comments(first: 1) { totalCount }
+                    reactionGroups { content viewerHasReacted }
+                  }
+                }
+              }
+            }
+          }' 2>/dev/null) || { RV_FAIL=true; break; }
 
-      # 新規レビュー本文を抽出 (PREV_REVIEWS に含まれない ID)
-      if [ -n "$RV" ]; then
-        NEW_R=""
-        IFS=',' read -ra RV_ARR <<< "$RV"
-        for rid in "${RV_ARR[@]}"; do
-          case ",$PREV_REVIEWS," in
-            *",$rid,"*) ;; # 既知
-            *) NEW_R="${NEW_R:+$NEW_R,}$rid" ;;
-          esac
-        done
-        [ -n "$NEW_R" ] && echo "NEW_REVIEW_BODIES|$NEW_R" && HAD_ACT=true
+        PAGE_RV=$(echo "$RJ" | jq -r --arg m "$MY_LOGIN" \
+          '[.data.repository.pullRequest.reviews.nodes[]
+            | select(.state != "PENDING" and .state != "DISMISSED")
+            | select(.body != null and .body != "")
+            | select(.author != null)
+            | select(.author.login != $m)
+            | select(.comments.totalCount == 0)
+            | select(([.reactionGroups[]? | select(.content == "THUMBS_UP" and .viewerHasReacted)] | length) == 0)
+            | .id] | join(",")')
+        [ -n "$PAGE_RV" ] && RV="${RV:+$RV,}$PAGE_RV"
+
+        HAS_PREV=$(echo "$RJ" | jq -r '.data.repository.pullRequest.reviews.pageInfo.hasPreviousPage')
+        RV_BEFORE=$(echo "$RJ" | jq -r '.data.repository.pullRequest.reviews.pageInfo.startCursor')
+        [ "$HAS_PREV" != "true" ] && break
+      done
+
+      if [ "$RV_FAIL" = true ]; then
+        API_FAIL=true
+      else
+        # ID を正規化 (ソート) してスナップショットと比較する
+        RV=$(echo "$RV" | tr ',' '\n' | grep -v '^$' | sort | paste -sd, - || true)
+        # 新規レビュー本文を抽出 (PREV_REVIEWS に含まれない ID)
+        if [ -n "$RV" ]; then
+          NEW_R=""
+          IFS=',' read -ra RV_ARR <<< "$RV"
+          for rid in "${RV_ARR[@]}"; do
+            case ",$PREV_REVIEWS," in
+              *",$rid,"*) ;; # 既知
+              *) NEW_R="${NEW_R:+$NEW_R,}$rid" ;;
+            esac
+          done
+          [ -n "$NEW_R" ] && echo "NEW_REVIEW_BODIES|$NEW_R" && HAD_ACT=true
+        fi
+        PREV_REVIEWS="$RV"
       fi
-      PREV_REVIEWS="$RV"
     fi
 
     # CI ステータスチェック。Actions の workflow run だけでなく GitHub Apps の
@@ -331,7 +363,7 @@ push されたイベント行の種類に応じて、対応するサブセクシ
 
 **詳細取得:**
 
-処理対象のスレッドについて、完全なコメント情報を取得する。処理対象にレビュー本文が含まれる場合は、pr-fix スキルのステップ 2 と同じ `reviews(last: 100)` クエリ (id・databaseId・state・body・url・author・comments.totalCount・reactionGroups) で本文とメタ情報も取得する:
+処理対象のスレッドについて、完全なコメント情報を取得する。処理対象にレビュー本文が含まれる場合は、pr-fix スキルのステップ 2 と同じ `reviews(last: 100, before: $before)` クエリ (id・databaseId・state・body・url・author・comments.totalCount・reactionGroups) で本文とメタ情報も取得する。レビューが 100 件を超える PR では `pageInfo.hasPreviousPage` が true の間 `startCursor` を `before` に渡して前のページも取得する:
 
 ```bash
 # <owner>, <repo>, <number> は実際の値に置き換える
