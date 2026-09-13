@@ -29,7 +29,8 @@ description: |
   </commentary>
   </example>
 
-model: fable
+# model は意図的に未指定。frontmatter で指定するとロックされ、subagent tool の model パラメーターが無視されるため。
+# advise スキルがセッションのモデルと異なるベンダーのモデル (Claude 系 → astra、OpenAI 系 → fable) を model パラメーターで渡す。
 tools: read, bash, find, grep
 ---
 
