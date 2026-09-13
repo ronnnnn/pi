@@ -5,7 +5,7 @@ description: 行き詰まったとき、アプローチの決定前、完了宣�
 
 # Advisor 相談ワークフロー
 
-判断ポイントで `advisor` subagent (fable) に相談し、独立した診断と助言を得て作業に反映する。advisor は会話履歴を自動では見られないため、**自己完結した相談ブリーフの構成が品質を決める**。
+判断ポイントで `advisor` subagent に相談し、独立した診断と助言を得て作業に反映する。advisor にはセッションのモデルと**異なるベンダーの強いモデル**を割り当て、同一モデルのバイアスに依らないセカンドオピニオンを得る。advisor は会話履歴を自動では見られないため、**自己完結した相談ブリーフの構成が品質を決める**。
 
 ## 相談すべき判断ポイント
 
@@ -61,23 +61,42 @@ description: 行き詰まったとき、アプローチの決定前、完了宣�
 
 **重要:** ブリーフには自身の仮説や結論を「事実」として書かない。仮説は仮説と明示する (advisor の独立性を損なわないため)。逆に、裏取り済みの事実は出典と併せて「検証済みの事実」に明示する。advisor は外部情報の再検証を行わない前提のため、出典がないと検証済みの事実にも慎重側の判定をする。
 
-### 3. advisor の起動
+### 3. advisor のモデル選択
+
+セッションのモデルを確認し、異なるベンダーの上位モデルを選ぶ (`env` / `printenv` は permission policy で拒否されるため `echo` を使う):
+
+```bash
+echo "$PI_PROVIDER $PI_MODEL"
+```
+
+| セッションのモデル (`PI_PROVIDER` / `PI_MODEL`) | advisor に渡す `model` |
+| --- | --- |
+| Claude 系 (`anthropic` / `claude-*`) | `astra` (openai-codex/gpt-6-astra) |
+| OpenAI 系 (`openai*` / `gpt-*`) | `fable` (anthropic/claude-fable-5-1) |
+| 上記以外 | `fable` |
+
+選んだモデルが利用不可 (subagent がモデル未検出エラーを返す) の場合は、もう一方 (astra ↔ fable) で起動し直す。
+
+### 4. advisor の起動
 
 ```
 subagent({
   subagent_type: "advisor",
+  model: "<手順 3 で選んだモデル>",
   description: "<相談の要約>",
   prompt: <構成したブリーフ>
 })
 ```
 
+`advisor` の agent 定義は `model` を frontmatter に持たない (frontmatter の `model` はロックされ、tool の `model` パラメーターを無視するため)。`model` を渡し忘れるとセッションと同じモデルが継承されるので、必ず指定する。
+
 advisor は自身で関連コードを確認した上で、診断・推奨・代替案・リスク・見落としを返す。助言を待ってから作業を続けるため、通常は foreground (`run_in_background` なし) で起動する。相談と並行して他の作業を進めたい場合のみ `run_in_background: true` で起動し、`get_subagent_result({ agent_id, wait: true })` で助言を回収する。
 
-結果に含まれる `agent_id` を控える (手順 5 の追加相談の宛先になる)。
+結果に含まれる `agent_id` を控える (手順 6 の追加相談の宛先になる)。
 
-**フォールバック:** `advisor` agent が見つからない場合、pi-subagents は自動的に `general-purpose` にフォールバックする。その場合は `general-purpose` subagent に `model` パラメーターで上位モデル (fable、利用不可なら opus) を指定し、ブリーフに「助言のみ返す。実装は行わない」と advisor の助言フォーマット (診断 / 推奨 / 代替案 / リスク) を含めて起動し直す。
+**フォールバック:** `advisor` agent が見つからない場合、pi-subagents は自動的に `general-purpose` にフォールバックする。その場合は `general-purpose` subagent に `model` パラメーターで手順 3 で選んだモデルを指定し、ブリーフに「助言のみ返す。実装は行わない」と advisor の助言フォーマット (診断 / 推奨 / 代替案 / リスク) を含めて起動し直す。
 
-### 4. 助言の適用
+### 5. 助言の適用
 
 助言を鵜呑みにせず、自身の証拠と照合してから適用する:
 
@@ -85,14 +104,14 @@ advisor は自身で関連コードを確認した上で、診断・推奨・代
 - 推奨されたステップが実際に失敗する、または事実と矛盾する → 盲従せず、矛盾点を明確にして次のステップ (追加相談 or ユーザーへの報告) を判断する
 - 適用の判断とその理由を記録し、最終報告に含める
 
-### 5. 追加相談 (必要な場合)
+### 6. 追加相談 (必要な場合)
 
-助言に不明点がある、適用結果が想定と異なる場合は、**同じ advisor を `resume` で再開して追撃する** (コンテキストを保持したまま多ターン相談できる):
+助言に不明点がある、適用結果が想定と異なる場合は、**同じ advisor を `resume` で再開して追撃する** (コンテキストを保持したまま多ターン相談できる。モデルは初回起動時に指定したものが引き継がれるので `model` の再指定は不要):
 
 ```
 subagent({
   subagent_type: "advisor",
-  resume: "<手順 3 で控えた agent_id>",
+  resume: "<手順 4 で控えた agent_id>",
   description: "<追加相談の要約>",
   prompt: <前回の助言の適用結果と新たな疑問点>
 })
@@ -102,7 +121,7 @@ background で走行中の advisor に途中で情報を追加したい場合は
 
 新しい論点の相談は新しい subagent 起動で行う (古いコンテキストの混入を避ける)。
 
-### 6. 報告
+### 7. 報告
 
 ```markdown
 ## 相談結果
