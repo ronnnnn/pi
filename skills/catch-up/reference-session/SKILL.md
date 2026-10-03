@@ -129,18 +129,35 @@ find ~/.pi/agent/sessions -mindepth 1 -maxdepth 1 -type d -name "*-${encoded_bra
 
 PR の作成・監視・修正を別の worktree (例: `main`) で起動した pi から行った場合、その作業はブランチの worktree ではなく起動元のセッションに残る。author を確認済みの PR に限り、対象リポジトリのセッションディレクトリ群から PR URL を含むファイルを追加の候補とする。
 
+探索するセッションディレクトリは次の 2 つの和集合とする。
+
+- `git worktree list --porcelain` に載っている各 worktree の path を encode したディレクトリ。通常の clone に `../main` などを linked worktree として追加した構成でも、起動元の worktree を拾える
+- 共通 git ディレクトリの親を encode した prefix で始まるディレクトリ。bare + worktree 構成で、削除済みの worktree のセッションも拾える
+
 ```bash
-# 対象リポジトリの共通 git ディレクトリの親 (bare + worktree 構成なら worktree 群の親) を encode した prefix
+set -o pipefail
+url_re="github\.com/<owner>/<repo>/pull/<n>([^0-9]|$)"
+worktrees=$(git worktree list --porcelain) || { echo "git worktree list に失敗"; exit 1; }
 common_dir=$(git rev-parse --path-format=absolute --git-common-dir) || { echo "git rev-parse に失敗"; exit 1; }
 repo_parent=$(dirname "$common_dir")
 prefix="--$(printf '%s' "${repo_parent#/}" | tr '/\\:' '---')-"
-url_re="github\.com/<owner>/<repo>/pull/<n>([^0-9]|$)"
 # 現在のセッションは依頼文や gh の出力に PR URL を含むため、ここで除外する
-url_candidates=$(grep -lE "$url_re" "$HOME/.pi/agent/sessions/$prefix"*/*.jsonl 2>/dev/null | { grep -vxF "${PI_SESSION_FILE:-}" || true; })
+url_candidates=$(
+  {
+    printf '%s\n' "$worktrees" | sed -n 's/^worktree //p' | while IFS= read -r p; do
+      printf '%s\n' "$HOME/.pi/agent/sessions/--$(printf '%s' "${p#/}" | tr '/\\:' '---')--"
+    done
+    find "$HOME/.pi/agent/sessions" -mindepth 1 -maxdepth 1 -type d -name "${prefix}*"
+  } | sort -u | while IFS= read -r d; do
+    [ -d "$d" ] || continue
+    find "$d" -mindepth 1 -maxdepth 1 -name '*.jsonl' -exec grep -lE "$url_re" {} +
+  done | { grep -vxF "${PI_SESSION_FILE:-}" || true; }
+)
 printf '%s\n' "$url_candidates"
 ```
 
 - `([^0-9]|$)` は `pull/4` が `pull/40` に誤一致するのを防ぐ
+- path にスペースを含んでも分割されないよう、パスは 1 行 1 件で `while IFS= read -r` で読む
 - PR が現在のリポジトリと異なる場合は、そのリポジトリのローカル clone を特定できるときだけ、clone 内で `repo_parent` を求めて実施する
 - 出力されたパスを控え、手順 4-1 の選定に引き継ぐ。bash の呼び出しをまたぐと変数は消えるため、4-1 ではパスを `url_candidates` に代入し直す
 - 追加候補はブランチの worktree のセッションと区別して扱い、報告で「PR URL を含む別 worktree のセッション」と明記する
@@ -173,7 +190,9 @@ url_candidates="<手順 2 の追加探索で得たパス (改行区切り。な�
 ls -t "$session_dir"/*.jsonl 2>/dev/null | { grep -vxF "${PI_SESSION_FILE:-}" || true; } | head -3
 
 # PR URL を含む別 worktree のセッション (上と重複するものを除き、mtime 降順)
-printf '%s\n' "$url_candidates" | { grep -vF "$session_dir/" || true; } | { grep -v '^$' || true; } | xargs -r ls -t 2>/dev/null | head -3
+# path のスペースで分割されないよう、NUL 区切りで ls に渡す
+files=$(printf '%s\n' "$url_candidates" | { grep -vF "$session_dir/" || true; } | { grep -v '^$' || true; })
+if [ -n "$files" ]; then printf '%s\n' "$files" | tr '\n' '\0' | xargs -0 ls -t | head -3; fi
 ```
 
 - 両方を合わせて除外後に 0 件なら「参照可能な過去セッションなし」として正常に終了する
