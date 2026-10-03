@@ -137,6 +137,9 @@ fi
 ブランチ名の `/` `\` `:` を `-` に置換した文字列で終わるセッションディレクトリを、次のように直接探索する。
 
 ```bash
+# ブランチ名を渡された場合はその値、PR の場合は gh pr view で取得した headRefName を代入する
+branch="<ブランチ名 または headRefName>"
+[ -n "$branch" ] || { echo "ブランチ名が空のため探索しない"; exit 1; }
 encoded_branch=$(printf '%s' "$branch" | tr '/\\:' '---')
 find ~/.pi/agent/sessions -mindepth 1 -maxdepth 1 -type d -name "*-${encoded_branch}--"
 ```
