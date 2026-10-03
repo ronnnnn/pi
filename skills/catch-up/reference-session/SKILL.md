@@ -219,7 +219,8 @@ if [ -n "$files" ]; then printf '%s\n' "$files" | tr '\n' '\0' | xargs -0 ls -t 
 ```
 
 - 両方を合わせて除外後に 0 件なら「参照可能な過去セッションなし」として正常に終了する
-- `PI_SESSION_FILE` が未設定の場合は自己除外を保証できない。最新のファイルが現在のセッションでないか (header の `id` と timestamp) を確認する
+- `PI_SESSION_ID` と `PI_SESSION_FILE` は、pi が LLM から呼ぶ bash tool に注入する (pi 同梱の `docs/environment-variables.md`)。`PI_SESSION_FILE` が未設定になるのは、ファイルを書かない ephemeral セッションと、session 環境変数の注入を無効にした custom shell tool の場合
+- `PI_SESSION_FILE` が未設定で `PI_SESSION_ID` がある場合は、ファイル名が `_${PI_SESSION_ID}.jsonl` で終わるものを除外する。どちらも未設定なら自己除外を保証できないため、その旨を報告に含める
 
 各セッションのサイズと最終更新時刻は次のように把握しておく。
 
