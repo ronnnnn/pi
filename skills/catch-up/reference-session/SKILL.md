@@ -60,7 +60,7 @@ todo({ action: "add", text: "現在のセッションへの取り込み: 経緯�
 | `compaction` | 長いセッションの要約。`.summary` に compaction 時点までの経緯がまとまっている |
 
 - `/skill:<name>` で起動したユーザーメッセージには、SKILL.md 全文が `<skill name="...">...</skill>` として展開されている。抽出時は `[/skill:<name>]` に置換して圧縮する
-- entry は `id` / `parentId` による木構造で、`/tree` で分岐したセッションには破棄された分岐や `branch_summary` が含まれる。本 skill の jq はファイル順に読むため、分岐がある場合は破棄された方針を最終方針と混同しないよう注意する
+- entry は `id` / `parentId` による木構造で、`/tree` で分岐したセッションには破棄された分岐も残る。pi は再開時にファイルの最後の entry を leaf とし、leaf から `parentId` をたどった系列を会話として使う。本 skill も手順 4-2 でこの系列だけを抽出し、破棄された分岐は `branch_summary` (分岐を離れた際の要約) で把握する
 
 ## 実行手順
 
@@ -182,20 +182,33 @@ done
 
 各セッションから次の 4 要素を jq で抽出する。jq が失敗した場合 (書き込み途中の不完全な行等) は、その要素を「抽出失敗」として扱い、空の結果を正常結果とみなさない。
 
+破棄された分岐の内容を結論と取り違えないよう、抽出は現在の系列に絞ってから行う。`active` 関数は、最後の entry から `parentId` をたどった系列だけをファイル順の JSONL として出力する。bash の呼び出しごとにシェルが変わるため、関数定義と `set -o pipefail` は各呼び出しに含める。
+
 ```bash
+set -o pipefail
 f=<session>.jsonl
 
+# 現在の系列 (pi が再開時に使う leaf から root までの経路) だけを出力する
+active() {
+  jq -cn 'reduce (inputs | select(.type != "session")) as $e ({m: {}, leaf: null}; .m[$e.id] = $e | .leaf = $e.id)
+    | .m as $m | [.leaf | recurse($m[.].parentId; . != null) | $m[.]] | reverse[]' "$1"
+}
+
+# 分岐の有無 (1 以上なら /tree による分岐あり) と、破棄された分岐の要約
+jq -rn '[inputs | select(.type != "session") | .parentId | select(. != null)] | group_by(.) | map(select(length > 1)) | length' "$f"
+active "$f" | jq -r 'select(.type=="branch_summary") | .summary'
+
 # ユーザーの指示 (何を依頼したか)。skill 展開は [/skill:<name>] に圧縮する
-jq -r 'select(.type=="message" and .message.role=="user")
+active "$f" | jq -r 'select(.type=="message" and .message.role=="user")
   | .message.content
   | if type=="string" then . else (map(select(.type=="text") | .text) | join("\n")) end
-  | gsub("<skill name=\"(?<n>[^\"]+)\"[^>]*>[\\s\\S]*?</skill>"; "[/skill:\(.n)]")' "$f"
+  | gsub("<skill name=\"(?<n>[^\"]+)\"[^>]*>[\\s\\S]*?</skill>"; "[/skill:\(.n)]")'
 
 # compaction summary (長いセッションの要約が保存されている場合がある)
-jq -r 'select(.type=="compaction") | .summary' "$f"
+active "$f" | jq -r 'select(.type=="compaction") | .summary'
 
 # edit / write したファイル。toolResult の isError と突き合わせ、ok (1 回以上成功) / unknown (結果の記録なし) / failed (全て失敗) を付ける
-jq -rn '
+active "$f" | jq -rn '
   reduce inputs as $e ({calls: [], result: {}};
     if $e.type == "message" and $e.message.role == "assistant" then
       .calls += [$e.message.content[]? | select(.type == "toolCall" and (.name == "edit" or .name == "write"))
@@ -206,28 +219,29 @@ jq -rn '
   | .result as $r
   | .calls | group_by(.path)[]
   | [.[] | $r[.id] // "unknown"] as $s
-  | "\(if any($s[]; . == "ok") then "ok" elif any($s[]; . == "unknown") then "unknown" else "failed" end)\t\(.[0].path)"' "$f"
+  | "\(if any($s[]; . == "ok") then "ok" elif any($s[]; . == "unknown") then "unknown" else "failed" end)\t\(.[0].path)"'
 
-# 最終報告 (text を持つ最後の assistant メッセージ)
-jq -rn '
+# 最終報告 (現在の系列で text を持つ最後の assistant メッセージ)
+active "$f" | jq -rn '
   reduce (inputs | select(.type == "message" and .message.role == "assistant")
           | {timestamp, text: ([.message.content[]? | select(.type == "text") | .text] | join("\n"))}
           | select(.text | test("\\S"))) as $m (null; $m)
-  | if . == null then "(text を持つ assistant メッセージなし)" else "[\(.timestamp)]\n\(.text)" end' "$f"
+  | if . == null then "(text を持つ assistant メッセージなし)" else "[\(.timestamp)]\n\(.text)" end'
 ```
 
 抽出結果の扱いでは、次の点に注意する。
 
 - 変更ファイル一覧は網羅的ではない。bash (`sed -i` や `git mv` 等) や MCP、subagent 経由の変更が含まれないため、必要なら `git log` で補う
+- 分岐がある場合は、破棄された分岐の作業 (変更ファイルを含む) は抽出結果に含まれない。`branch_summary` がない分岐は内容を把握できないため、分岐があった事実だけを報告する
 - 最終報告がセッションの結論とは限らない。作業途中で終わったセッションでは途中経過の報告になるため、報告ではその旨を明記する
 - worker などに委譲した作業の結果は `toolResult` 側に残る。経緯の把握に必要な場合だけ、次の jq で subagent の結果を追加抽出する
 
 ```bash
-jq -r 'select(.type=="message" and .message.role=="toolResult" and .message.toolName=="get_subagent_result")
-  | [.message.content[]? | select(.type=="text") | .text] | join("\n")' "$f"
+active "$f" | jq -r 'select(.type=="message" and .message.role=="toolResult" and .message.toolName=="get_subagent_result")
+  | [.message.content[]? | select(.type=="text") | .text] | join("\n")'
 ```
 
-jq の実行自体は数十 MB のファイルでも 1 秒未満で終わる。問題になるのは抽出結果の量なので、先に `| wc -c` で出力サイズを確認してから本文を取得する。
+jq の実行自体は、`active` による系列の抽出を含めても 60MB 程度のファイルなら約 1 秒で終わる。問題になるのは抽出結果の量なので、先に `| wc -c` で出力サイズを確認してから本文を取得する。
 
 #### 4-3. worker subagent への委譲
 
@@ -275,6 +289,7 @@ subagent({
 - **変更されたファイル**: <ok のパス。多い場合はディレクトリ単位でまとめる。unknown は「結果不明」、failed は「失敗した変更」として分ける>
 - **結論**: <最終報告の要点。途中で終わったセッションならその旨>
 - **未完了の事項・既知の注意点**: <残課題、失敗したアプローチ、ユーザーが却下した方針など>
+- **分岐**: </tree による分岐があれば、破棄された分岐の要約 (branch_summary)。なければ省略>
 
 ## 現在の作業との関連
 
