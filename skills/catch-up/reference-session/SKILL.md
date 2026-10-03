@@ -58,9 +58,11 @@ todo({ action: "add", text: "現在のセッションへの取り込み: 経緯�
 | `session` | header。`cwd` でセッションの作業ディレクトリを確認できる |
 | `message` | `.message.role` が `user` / `assistant` / `toolResult` のメッセージ。assistant の `.message.content[]` には `text` / `toolCall` ブロックが含まれ、toolResult は `.message.toolCallId` と `.message.isError` を持つ |
 | `compaction` | 長いセッションの要約。`.summary` に compaction 時点までの経緯がまとまっている |
+| `context_edit` | 以前の entry (`targetId`) の内容を、以降のモデルのコンテキストでだけ差し替える。`replacement` が null なら除外、それ以外は置換後の内容。同じ entry への編集は系列上で最後のものが有効 |
 
 - `/skill:<name>` で起動したユーザーメッセージには、SKILL.md 全文が `<skill name="...">...</skill>` として展開されている。抽出時は `[/skill:<name>]` に置換して圧縮する
 - entry は `id` / `parentId` による木構造で、`/tree` で分岐したセッションには破棄された分岐も残る。pi は再開時にファイルの最後の entry を leaf とし、leaf から `parentId` をたどった系列を会話として使う。本 skill も手順 4-2 でこの系列だけを抽出し、破棄された分岐は `branch_summary` (分岐を離れた際の要約) で把握する
+- header の `version` が 1 (または欠落) のセッションは、`id` / `parentId` を持たない直線的な形式。pi は読み込み時にファイルの順で `id` / `parentId` を振るため、本 skill もファイルの順のまま扱う
 
 ## 実行手順
 
@@ -210,7 +212,12 @@ done
 
 各セッションから次の 4 要素を jq で抽出する。jq が失敗した場合 (書き込み途中の不完全な行等) は、その要素を「抽出失敗」として扱い、空の結果を正常結果とみなさない。
 
-破棄された分岐の内容を結論と取り違えないよう、抽出は現在の系列に絞ってから行う。`active` 関数は、最後の entry から `parentId` をたどった系列だけをファイル順の JSONL として出力する。bash の呼び出しごとにシェルが変わるため、関数定義と `set -o pipefail` は各呼び出しに含める。
+破棄された分岐の内容を結論と取り違えないよう、抽出は現在の系列に絞ってから行う。bash の呼び出しごとにシェルが変わるため、関数定義と `set -o pipefail` は各呼び出しに含める。
+
+- `active`: 最後の entry から `parentId` をたどった系列だけを、ファイル順の JSONL として出力する (v1 はファイルの順のまま)
+- `edited`: `active` の系列に `context_edit` を適用したもの。差し替え後の内容がモデルの見ていた依頼・報告なので、ユーザーの指示と最終報告に使う
+
+`context_edit` が変えるのはモデルのコンテキストだけで、edit / write によるファイル変更は実際に起きている。そのため、変更ファイル、compaction、subagent の結果は `active` から抽出する。
 
 ```bash
 set -o pipefail
@@ -218,8 +225,26 @@ f=<session>.jsonl
 
 # 現在の系列 (pi が再開時に使う leaf から root までの経路) だけを出力する
 active() {
-  jq -cn 'reduce (inputs | select(.type != "session")) as $e ({m: {}, leaf: null}; .m[$e.id] = $e | .leaf = $e.id)
-    | .m as $m | [.leaf | recurse($m[.].parentId; . != null) | $m[.]] | reverse[]' "$1"
+  jq -cn '[inputs] as $all
+    | (if $all[0].type == "session" then ($all[0].version // 1) else 1 end) as $v
+    | [$all[] | select(.type != "session")] as $es
+    | if $v < 2 then $es[]
+      else reduce $es[] as $e ({m: {}, leaf: null}; .m[$e.id] = $e | .leaf = $e.id)
+        | .m as $m | [.leaf | recurse($m[.].parentId; . != null) | $m[.]] | reverse[]
+      end' "$1"
+}
+
+# active の系列に context_edit を適用する (null は除外、それ以外は内容を置換)
+edited() {
+  active "$1" | jq -cn '[inputs]
+    | (reduce (.[] | select(.type == "context_edit")) as $c ({}; .[$c.targetId] = {r: $c.replacement})) as $ed
+    | .[] | select(.type != "context_edit")
+    | $ed[.id // ""] as $x
+    | if $x == null then .
+      elif $x.r == null then empty
+      elif .type == "message" then
+        .message.content = (if .message.role != "user" and ($x.r | type) == "string" then [{type: "text", text: $x.r}] else $x.r end)
+      else .content = $x.r end'
 }
 
 # 分岐の有無 (1 以上なら /tree による分岐あり) と、破棄された分岐の要約
@@ -227,7 +252,7 @@ jq -rn '[inputs | select(.type != "session") | .parentId | select(. != null)] | 
 active "$f" | jq -r 'select(.type=="branch_summary") | .summary'
 
 # ユーザーの指示 (何を依頼したか)。skill 展開は [/skill:<name>] に圧縮する
-active "$f" | jq -r 'select(.type=="message" and .message.role=="user")
+edited "$f" | jq -r 'select(.type=="message" and .message.role=="user")
   | .message.content
   | if type=="string" then . else (map(select(.type=="text") | .text) | join("\n")) end
   | gsub("<skill name=\"(?<n>[^\"]+)\"[^>]*>[\\s\\S]*?</skill>"; "[/skill:\(.n)]")'
@@ -250,7 +275,7 @@ active "$f" | jq -rn '
   | "\(if any($s[]; . == "ok") then "ok" elif any($s[]; . == "unknown") then "unknown" else "failed" end)\t\(.[0].path)"'
 
 # 最終報告 (現在の系列で text を持つ最後の assistant メッセージ)
-active "$f" | jq -rn '
+edited "$f" | jq -rn '
   reduce (inputs | select(.type == "message" and .message.role == "assistant")
           | {timestamp, text: ([.message.content[]? | select(.type == "text") | .text] | join("\n"))}
           | select(.text | test("\\S"))) as $m (null; $m)
@@ -269,7 +294,7 @@ active "$f" | jq -r 'select(.type=="message" and .message.role=="toolResult" and
   | [.message.content[]? | select(.type=="text") | .text] | join("\n")'
 ```
 
-jq の実行自体は、`active` による系列の抽出を含めても 60MB 程度のファイルなら約 1 秒で終わる。問題になるのは抽出結果の量なので、先に `| wc -c` で出力サイズを確認してから本文を取得する。
+jq の実行自体は、`edited` による系列の抽出と編集の適用を含めても 60MB 程度のファイルなら約 2 秒で終わる。問題になるのは抽出結果の量なので、先に `| wc -c` で出力サイズを確認してから本文を取得する。
 
 #### 4-3. worker subagent への委譲
 
