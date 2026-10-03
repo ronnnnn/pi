@@ -8,7 +8,7 @@
 | :--- | :--- |
 | [skills/git](./skills/git) | Git/GitHub ワークフロー (コミット、PR 作成・レビュー・修正・監視、CI 分析) |
 | [skills/agents-md](./skills/agents-md) | AGENTS.md の作成・更新・品質管理、`.claude/rules` の作成 |
-| [skills/catch-up](./skills/catch-up) | 技術・ツール・フレームワークの最新バージョン取得と技術調査 |
+| [skills/catch-up](./skills/catch-up) | 技術・ツール・フレームワークの最新バージョン取得と技術調査、作業内容の学習、過去の pi セッションの参照 |
 | [skills/dev](./skills/dev) | 開発支援 (コードコメント追加、行動計画作成、並列タスク実行、レビュー) |
 | [agents/](./agents) | [pi-subagents](https://github.com/gotgenes/pi-packages/tree/main/packages/pi-subagents) 用の custom agent 定義 |
 
@@ -44,6 +44,7 @@ skill は `/skill:<name>` コマンドで明示的に起動するか、タスク
 /skill:plan            # 行動計画を作成
 /skill:do              # 複数タスクを並列実行
 /skill:tech-research   # 技術調査を実行
+/skill:reference-session #123  # PR に紐づく過去セッションの経緯を把握
 ```
 
 agent は pi-subagents の `subagent` tool から呼び出されます (例: `subagent({ subagent_type: "commit-proposer", ... })`)。
