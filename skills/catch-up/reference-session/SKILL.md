@@ -176,7 +176,11 @@ url_candidates=$(
     printf '%s\n' "$worktrees" | sed -n 's/^worktree //p' | while IFS= read -r p; do
       printf '%s\n' "$HOME/.pi/agent/sessions/--$(printf '%s' "${p#/}" | tr '/\\:' '---')--"
     done
-    find "$HOME/.pi/agent/sessions" -mindepth 1 -maxdepth 1 -type d -name "${prefix}*"
+    # prefix に [ などが含まれても glob として解釈されないよう、find -name ではなく引用符付きの前方一致で絞る
+    find "$HOME/.pi/agent/sessions" -mindepth 1 -maxdepth 1 -type d | while IFS= read -r d; do
+      n=${d##*/}
+      if [ "${n#"$prefix"}" != "$n" ]; then printf '%s\n' "$d"; fi
+    done
   } | sort -u | while IFS= read -r d; do
     [ -d "$d" ] || continue
     find "$d" -mindepth 1 -maxdepth 1 -name '*.jsonl' -exec grep -lE "$url_re" {} +
