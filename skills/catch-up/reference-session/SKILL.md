@@ -109,8 +109,28 @@ printf '%s\n' "$pr" | jq -r --arg me "$me" '"head=\(.headRefName) author=\(.auth
 - 条件を満たさない場合は、todo 操作・セッション探索・subagent 起動を一切せず、次のいずれか 1 行だけを報告して終了する
   - author が異なる場合: `PR <url> の author は <author> のため、セッション参照は行いません。`
   - 取得に失敗した場合: `PR <ref> の情報を取得できなかったため、セッション参照は行いません (<理由>)。`
-- 自分の PR であれば、`headRefName` を手順 1 のブランチ名の解決と同じ方法で worktree と突き合わせ、一致した path を対象 path として手順 3 へ進む
-- PR のリポジトリ (URL の `<owner>/<repo>`) が現在のリポジトリと異なる場合は、フォールバックで探索する。現在のリポジトリは `gh repo view --json nameWithOwner --jq .nameWithOwner` で確認し、その worktree とは突き合わせない
+- 自分の PR であれば、PR のリポジトリのローカル clone (`repo_dir`) を次の「PR のリポジトリの clone の特定」で決める
+- `repo_dir` が決まった場合は、`headRefName` を `repo_dir` の worktree と突き合わせる。方法は手順 1 のブランチ名の解決と同じで、`git -C "$repo_dir" worktree list --porcelain` を使う。一致した path を対象 path として手順 3 へ進む
+- `repo_dir` が決まらない場合は worktree を突き合わせず、フォールバックで探索する
+
+#### PR のリポジトリの clone の特定
+
+worktree の突き合わせと PR URL による追加探索は、PR のリポジトリのローカル clone の中で行う。現在のリポジトリが別のリポジトリだと、無関係なセッションディレクトリを探索してしまうため。
+
+```bash
+pr_repo="<owner>/<repo>"  # PR URL から取得。番号指定なら gh pr view --json url の値から取得
+cur_repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null)
+if [ "$cur_repo" = "$pr_repo" ]; then
+  # worktree 内なら toplevel、bare リポジトリ内なら共通 git ディレクトリ
+  git rev-parse --show-toplevel 2>/dev/null || git rev-parse --path-format=absolute --git-common-dir
+else
+  echo "PR のリポジトリ ($pr_repo) は現在のリポジトリ (${cur_repo:-不明}) と異なる"
+fi
+```
+
+- 現在のリポジトリが PR のリポジトリと一致すれば、出力された path (bare 構成では共通 git ディレクトリ) を `repo_dir` とする
+- 一致しない場合は、question tool で PR のリポジトリのローカル clone の path をユーザーに確認する。回答された path は、`(cd "$repo_dir" && gh repo view --json nameWithOwner --jq .nameWithOwner)` の結果が `pr_repo` と一致するか確かめてから使う
+- clone が分からない、または一致しない場合は `repo_dir` を未決定とし、PR URL による追加探索は行わない。報告にはその旨を含める
 
 #### worktree がない場合のフォールバック
 
@@ -139,8 +159,9 @@ PR の作成・監視・修正を別の worktree (例: `main`) で起動した p
 ```bash
 set -o pipefail
 url_re="github\.com/<owner>/<repo>/pull/<n>([^0-9]|$)"
-worktrees=$(git worktree list --porcelain) || { echo "git worktree list に失敗"; exit 1; }
-common_dir=$(git rev-parse --path-format=absolute --git-common-dir) || { echo "git rev-parse に失敗"; exit 1; }
+repo_dir="<PR のリポジトリの clone の特定で決めた path>"
+worktrees=$(git -C "$repo_dir" worktree list --porcelain) || { echo "git worktree list に失敗"; exit 1; }
+common_dir=$(git -C "$repo_dir" rev-parse --path-format=absolute --git-common-dir) || { echo "git rev-parse に失敗"; exit 1; }
 repo_parent=$(dirname "$common_dir")
 prefix="--$(printf '%s' "${repo_parent#/}" | tr '/\\:' '---')-"
 # 現在のセッションは依頼文や gh の出力に PR URL を含むため、ここで除外する
@@ -160,7 +181,7 @@ printf '%s\n' "$url_candidates"
 
 - `([^0-9]|$)` は `pull/4` が `pull/40` に誤一致するのを防ぐ
 - path にスペースを含んでも分割されないよう、パスは 1 行 1 件で `while IFS= read -r` で読む
-- PR が現在のリポジトリと異なる場合は、そのリポジトリのローカル clone を特定できるときだけ、clone 内で `repo_parent` を求めて実施する
+- `repo_dir` が未決定の場合はこの追加探索を行わない
 - 出力されたパスを控え、手順 4-1 の選定に引き継ぐ。bash の呼び出しをまたぐと変数は消えるため、4-1 ではパスを `url_candidates` に代入し直す
 - 追加候補はブランチの worktree のセッションと区別して扱い、報告で「PR URL を含む別 worktree のセッション」と明記する
 
