@@ -161,7 +161,10 @@ PR の作成・監視・修正を別の worktree (例: `main`) で起動した p
 
 ```bash
 set -o pipefail
-url_re="github\.com/<owner>/<repo>/pull/<n>([^0-9]|$)"
+pr_repo="<owner>/<repo>"
+pr_number="<n>"
+# owner / repo 名に使える文字のうち正規表現で特別なのは . だけなので、. をエスケープする
+url_re="github\.com/$(printf '%s' "$pr_repo" | sed 's/\./\\./g')/pull/${pr_number}([^0-9]|$)"
 repo_dir="<PR のリポジトリの clone の特定で決めた path>"
 worktrees=$(git -C "$repo_dir" worktree list --porcelain) || { echo "git worktree list に失敗"; exit 1; }
 common_dir=$(git -C "$repo_dir" rev-parse --path-format=absolute --git-common-dir) || { echo "git rev-parse に失敗"; exit 1; }
