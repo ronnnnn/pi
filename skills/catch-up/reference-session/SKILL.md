@@ -177,7 +177,13 @@ url_candidates=$(
   } | sort -u | while IFS= read -r d; do
     [ -d "$d" ] || continue
     find "$d" -mindepth 1 -maxdepth 1 -name '*.jsonl' -exec grep -lE "$url_re" {} +
-  done | { grep -vxF "${PI_SESSION_FILE:-}" || true; }
+  done | { grep -vxF "${PI_SESSION_FILE:-}" || true; } | while IFS= read -r f; do
+    # encode の衝突による無関係なセッションを除くため、header の cwd が対象リポジトリのもの (repo_parent 配下か worktree 一覧に含まれる) か確かめる
+    c=$(head -1 "$f" | jq -r '.cwd // empty' 2>/dev/null)
+    [ -n "$c" ] || continue
+    case "$c/" in "$repo_parent"/*) printf '%s\n' "$f"; continue ;; esac
+    if printf '%s\n' "$worktrees" | sed -n 's/^worktree //p' | grep -qxF "$c"; then printf '%s\n' "$f"; fi
+  done
 )
 printf '%s\n' "$url_candidates"
 ```
@@ -186,6 +192,7 @@ printf '%s\n' "$url_candidates"
 - path にスペースを含んでも分割されないよう、パスは 1 行 1 件で `while IFS= read -r` で読む
 - `repo_dir` が未決定の場合はこの追加探索を行わない
 - 出力されたパスを控え、手順 4-1 の選定に引き継ぐ。bash の呼び出しをまたぐと変数は消えるため、4-1 ではパスを `url_candidates` に代入し直す
+- header の `cwd` が対象リポジトリのものと確認できない候補は、PR URL を含んでいても除外する
 - 追加候補はブランチの worktree のセッションと区別して扱い、報告で「PR URL を含む別 worktree のセッション」と明記する
 
 ### 3. セッションディレクトリの解決
@@ -209,6 +216,7 @@ test -d "$session_dir" && find "$session_dir" -mindepth 1 -maxdepth 1 -name '*.j
 直下の `*.jsonl` を mtime 降順で列挙し、直近 3 件 (ユーザーが件数を指定した場合はその件数) を対象にする。手順 2 の追加探索で候補を得た場合は、それも別枠で同じ件数まで対象にする。選定はメインセッションで行い、現在のセッション (`$PI_SESSION_FILE`) を除外する。
 
 ```bash
+limit=3  # ユーザーが件数を指定した場合はその値
 target="<対象 path>"
 session_dir="<手順 3 のセッションディレクトリ>"
 url_candidates="<手順 2 の追加探索で得たパス (改行区切り。なければ空)>"
@@ -217,12 +225,12 @@ url_candidates="<手順 2 の追加探索で得たパス (改行区切り。な�
 # 別の cwd が同じディレクトリ名に encode される場合があるため、header の cwd が対象 path と一致するものだけ残す
 ls -t "$session_dir"/*.jsonl 2>/dev/null | { grep -vxF "${PI_SESSION_FILE:-}" || true; } | while IFS= read -r f; do
   [ "$(head -1 "$f" | jq -r '.cwd // empty' 2>/dev/null)" = "$target" ] && printf '%s\n' "$f"
-done | head -3
+done | head -n "$limit"
 
 # PR URL を含む別 worktree のセッション (上と重複するものを除き、mtime 降順)
 # path のスペースで分割されないよう、NUL 区切りで ls に渡す
 files=$(printf '%s\n' "$url_candidates" | { grep -vF "$session_dir/" || true; } | { grep -v '^$' || true; })
-if [ -n "$files" ]; then printf '%s\n' "$files" | tr '\n' '\0' | xargs -0 ls -t | head -3; fi
+if [ -n "$files" ]; then printf '%s\n' "$files" | tr '\n' '\0' | xargs -0 ls -t | head -n "$limit"; fi
 ```
 
 - 両方を合わせて除外後に 0 件なら「参照可能な過去セッションなし」として正常に終了する
