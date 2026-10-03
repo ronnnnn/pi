@@ -135,13 +135,15 @@ common_dir=$(git rev-parse --path-format=absolute --git-common-dir) || { echo "g
 repo_parent=$(dirname "$common_dir")
 prefix="--$(printf '%s' "${repo_parent#/}" | tr '/\\:' '---')-"
 url_re="github\.com/<owner>/<repo>/pull/<n>([^0-9]|$)"
-grep -lE "$url_re" "$HOME/.pi/agent/sessions/$prefix"*/*.jsonl
+# 現在のセッションは依頼文や gh の出力に PR URL を含むため、ここで除外する
+url_candidates=$(grep -lE "$url_re" "$HOME/.pi/agent/sessions/$prefix"*/*.jsonl 2>/dev/null | { grep -vxF "${PI_SESSION_FILE:-}" || true; })
+printf '%s\n' "$url_candidates"
 ```
 
 - `([^0-9]|$)` は `pull/4` が `pull/40` に誤一致するのを防ぐ
 - PR が現在のリポジトリと異なる場合は、そのリポジトリのローカル clone を特定できるときだけ、clone 内で `repo_parent` を求めて実施する
+- 出力されたパスを控え、手順 4-1 の選定に引き継ぐ。bash の呼び出しをまたぐと変数は消えるため、4-1 ではパスを `url_candidates` に代入し直す
 - 追加候補はブランチの worktree のセッションと区別して扱い、報告で「PR URL を含む別 worktree のセッション」と明記する
-- 現在のセッション (`$PI_SESSION_FILE`) は除外する
 
 ### 3. セッションディレクトリの解決
 
@@ -161,13 +163,20 @@ test -d "$session_dir" && find "$session_dir" -mindepth 1 -maxdepth 1 -name '*.j
 
 #### 4-1. セッションの選定
 
-直下の `*.jsonl` を mtime 降順で列挙し、直近 3 件 (ユーザーが件数を指定した場合はその件数) を対象にする。選定はメインセッションで行い、現在のセッション (`$PI_SESSION_FILE`) を除外する。
+直下の `*.jsonl` を mtime 降順で列挙し、直近 3 件 (ユーザーが件数を指定した場合はその件数) を対象にする。手順 2 の追加探索で候補を得た場合は、それも別枠で同じ件数まで対象にする。選定はメインセッションで行い、現在のセッション (`$PI_SESSION_FILE`) を除外する。
 
 ```bash
-ls -t "$session_dir"/*.jsonl | { grep -vxF "${PI_SESSION_FILE:-}" || true; } | head -3
+session_dir="<手順 3 のセッションディレクトリ>"
+url_candidates="<手順 2 の追加探索で得たパス (改行区切り。なければ空)>"
+
+# ブランチの worktree のセッション (ディレクトリがなければ空)
+ls -t "$session_dir"/*.jsonl 2>/dev/null | { grep -vxF "${PI_SESSION_FILE:-}" || true; } | head -3
+
+# PR URL を含む別 worktree のセッション (上と重複するものを除き、mtime 降順)
+printf '%s\n' "$url_candidates" | { grep -vF "$session_dir/" || true; } | { grep -v '^$' || true; } | xargs -r ls -t 2>/dev/null | head -3
 ```
 
-- 除外後に 0 件なら「参照可能な過去セッションなし」として正常に終了する
+- 両方を合わせて除外後に 0 件なら「参照可能な過去セッションなし」として正常に終了する
 - `PI_SESSION_FILE` が未設定の場合は自己除外を保証できない。最新のファイルが現在のセッションでないか (header の `id` と timestamp) を確認する
 
 各セッションのサイズと最終更新時刻は次のように把握しておく。
