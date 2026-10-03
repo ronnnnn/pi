@@ -161,6 +161,13 @@ PR の作成・監視・修正を別の worktree (例: `main`) で起動した p
 
 ```bash
 set -o pipefail
+# 現在のセッションを除外する。PI_SESSION_FILE を優先し、なければ PI_SESSION_ID でファイル名の末尾を照合する
+exclude_self() {
+  if [ -n "${PI_SESSION_FILE:-}" ]; then grep -vxF "$PI_SESSION_FILE"
+  elif [ -n "${PI_SESSION_ID:-}" ]; then grep -vF "_${PI_SESSION_ID}.jsonl"
+  else cat; fi
+  return 0
+}
 pr_repo="<owner>/<repo>"
 pr_number="<n>"
 # owner / repo 名に使える文字のうち正規表現で特別なのは . だけなので、. をエスケープする
@@ -184,7 +191,7 @@ url_candidates=$(
   } | sort -u | while IFS= read -r d; do
     [ -d "$d" ] || continue
     find "$d" -mindepth 1 -maxdepth 1 -name '*.jsonl' -exec grep -lE "$url_re" {} +
-  done | { grep -vxF "${PI_SESSION_FILE:-}" || true; } | while IFS= read -r f; do
+  done | exclude_self | while IFS= read -r f; do
     # encode の衝突による無関係なセッションを除くため、header の cwd が対象リポジトリのもの (repo_parent 配下か worktree 一覧に含まれる) か確かめる
     c=$(head -1 "$f" | jq -r '.cwd // empty' 2>/dev/null)
     [ -n "$c" ] || continue
@@ -223,6 +230,13 @@ test -d "$session_dir" && find "$session_dir" -mindepth 1 -maxdepth 1 -name '*.j
 直下の `*.jsonl` を mtime 降順で列挙し、直近 3 件 (ユーザーが件数を指定した場合はその件数) を対象にする。手順 2 の追加探索で候補を得た場合は、それも別枠で同じ件数まで対象にする。選定はメインセッションで行い、現在のセッション (`$PI_SESSION_FILE`) を除外する。
 
 ```bash
+# 現在のセッションを除外する。PI_SESSION_FILE を優先し、なければ PI_SESSION_ID でファイル名の末尾を照合する
+exclude_self() {
+  if [ -n "${PI_SESSION_FILE:-}" ]; then grep -vxF "$PI_SESSION_FILE"
+  elif [ -n "${PI_SESSION_ID:-}" ]; then grep -vF "_${PI_SESSION_ID}.jsonl"
+  else cat; fi
+  return 0
+}
 limit=3  # ユーザーが件数を指定した場合はその値
 target="<対象 path>"
 session_dir="<手順 3 のセッションディレクトリ>"
@@ -230,13 +244,13 @@ url_candidates="<手順 2 の追加探索で得たパス (改行区切り。な�
 
 # ブランチの worktree のセッション (ディレクトリがなければ空)。
 # 別の cwd が同じディレクトリ名に encode される場合があるため、header の cwd が対象 path と一致するものだけ残す
-ls -t "$session_dir"/*.jsonl 2>/dev/null | { grep -vxF "${PI_SESSION_FILE:-}" || true; } | while IFS= read -r f; do
+ls -t "$session_dir"/*.jsonl 2>/dev/null | exclude_self | while IFS= read -r f; do
   [ "$(head -1 "$f" | jq -r '.cwd // empty' 2>/dev/null)" = "$target" ] && printf '%s\n' "$f"
 done | head -n "$limit"
 
 # PR URL を含む別 worktree のセッション (上と重複するものを除き、mtime 降順)
 # path のスペースで分割されないよう、NUL 区切りで ls に渡す
-files=$(printf '%s\n' "$url_candidates" | { grep -vF "$session_dir/" || true; } | { grep -v '^$' || true; })
+files=$(printf '%s\n' "$url_candidates" | { grep -vF "$session_dir/" || true; } | { grep -v '^$' || true; } | exclude_self)
 if [ -n "$files" ]; then printf '%s\n' "$files" | tr '\n' '\0' | xargs -0 ls -t | head -n "$limit"; fi
 ```
 
