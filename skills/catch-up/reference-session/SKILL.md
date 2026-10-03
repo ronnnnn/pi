@@ -209,11 +209,15 @@ test -d "$session_dir" && find "$session_dir" -mindepth 1 -maxdepth 1 -name '*.j
 直下の `*.jsonl` を mtime 降順で列挙し、直近 3 件 (ユーザーが件数を指定した場合はその件数) を対象にする。手順 2 の追加探索で候補を得た場合は、それも別枠で同じ件数まで対象にする。選定はメインセッションで行い、現在のセッション (`$PI_SESSION_FILE`) を除外する。
 
 ```bash
+target="<対象 path>"
 session_dir="<手順 3 のセッションディレクトリ>"
 url_candidates="<手順 2 の追加探索で得たパス (改行区切り。なければ空)>"
 
-# ブランチの worktree のセッション (ディレクトリがなければ空)
-ls -t "$session_dir"/*.jsonl 2>/dev/null | { grep -vxF "${PI_SESSION_FILE:-}" || true; } | head -3
+# ブランチの worktree のセッション (ディレクトリがなければ空)。
+# 別の cwd が同じディレクトリ名に encode される場合があるため、header の cwd が対象 path と一致するものだけ残す
+ls -t "$session_dir"/*.jsonl 2>/dev/null | { grep -vxF "${PI_SESSION_FILE:-}" || true; } | while IFS= read -r f; do
+  [ "$(head -1 "$f" | jq -r '.cwd // empty' 2>/dev/null)" = "$target" ] && printf '%s\n' "$f"
+done | head -3
 
 # PR URL を含む別 worktree のセッション (上と重複するものを除き、mtime 降順)
 # path のスペースで分割されないよう、NUL 区切りで ls に渡す
