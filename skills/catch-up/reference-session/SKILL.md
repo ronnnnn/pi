@@ -58,7 +58,7 @@ todo({ action: "add", text: "現在のセッションへの取り込み: 経緯�
 | `session` | header。`cwd` でセッションの作業ディレクトリを確認できる |
 | `message` | `.message.role` が `user` / `assistant` / `toolResult` のメッセージ。assistant の `.message.content[]` には `text` / `toolCall` ブロックが含まれ、toolResult は `.message.toolCallId` と `.message.isError` を持つ |
 | `compaction` | 長いセッションの要約。`.summary` に compaction 時点までの経緯がまとまっている |
-| `context_edit` | 以前の entry (`targetId`) の内容を、以降のモデルのコンテキストでだけ差し替える。`replacement` が null なら除外、それ以外は置換後の内容。同じ entry への編集は系列上で最後のものが有効 |
+| `context_edit` | 以前の entry (`targetId`) の内容を、以降のモデルのコンテキストでだけ差し替える。`replacement` が null なら除外、それ以外は `replacement.content` が置換後の内容 (文字列または content 配列)。同じ entry への編集は系列上で最後のものが有効 |
 
 - `/skill:<name>` で起動したユーザーメッセージには、SKILL.md 全文が `<skill name="...">...</skill>` として展開されている。抽出時は `[/skill:<name>]` に置換して圧縮する
 - entry は `id` / `parentId` による木構造で、`/tree` で分岐したセッションには破棄された分岐も残る。pi は再開時にファイルの最後の entry を leaf とし、leaf から `parentId` をたどった系列を会話として使う。本 skill も手順 4-2 でこの系列だけを抽出し、破棄された分岐は `branch_summary` (分岐を離れた際の要約) で把握する
@@ -203,7 +203,9 @@ if [ -n "$files" ]; then printf '%s\n' "$files" | tr '\n' '\0' | xargs -0 ls -t 
 各セッションのサイズと最終更新時刻は次のように把握しておく。
 
 ```bash
-for f in <選定したファイル>; do
+# path にスペースを含んでも分割されないよう、選定したファイルを 1 行 1 件で読む
+printf '%s\n' "<選定したファイル (改行区切り)>" | while IFS= read -r f; do
+  [ -f "$f" ] || continue
   printf '%s\t%s\t%s\n' "$(basename "$f")" "$(du -h "$f" | cut -f1)" "$(jq -r 'select(.type=="message") | .timestamp' "$f" | tail -1)"
 done
 ```
@@ -238,13 +240,14 @@ active() {
 edited() {
   active "$1" | jq -cn '[inputs]
     | (reduce (.[] | select(.type == "context_edit")) as $c ({}; .[$c.targetId] = {r: $c.replacement})) as $ed
+    # replacement は {content: 文字列 | content 配列} または null
     | .[] | select(.type != "context_edit")
     | $ed[.id // ""] as $x
     | if $x == null then .
       elif $x.r == null then empty
       elif .type == "message" then
-        .message.content = (if .message.role != "user" and ($x.r | type) == "string" then [{type: "text", text: $x.r}] else $x.r end)
-      else .content = $x.r end'
+        .message.content = (if .message.role != "user" and ($x.r.content | type) == "string" then [{type: "text", text: $x.r.content}] else $x.r.content end)
+      else .content = $x.r.content end'
 }
 
 # 分岐の有無 (1 以上なら /tree による分岐あり) と、破棄された分岐の要約
