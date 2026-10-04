@@ -71,11 +71,13 @@ echo "$PI_PROVIDER $PI_MODEL"
 
 | セッションのモデル (`PI_PROVIDER` / `PI_MODEL`) | advisor に渡す `model` |
 | --- | --- |
-| Claude 系 (`anthropic` / `claude-*`) | `astra` (openai-codex/gpt-6-astra) |
-| OpenAI 系 (`openai*` / `gpt-*`) | `fable` (anthropic/claude-fable-5-1) |
-| 上記以外 | `fable` |
+| Claude 系 (`anthropic` / `claude-*`) | `openai-codex/gpt-6-astra` (astra) |
+| OpenAI 系 (`openai*` / `gpt-*`) | `anthropic/claude-fable-5-1` (fable) |
+| 上記以外 | `anthropic/claude-fable-5-1` (fable) |
 
-選んだモデルが利用不可 (subagent がモデル未検出エラーを返す) の場合は、もう一方 (astra ↔ fable) で起動し直す。
+`model` は provider/modelId で渡す。fuzzy 名だと意図と異なるバージョンに解決されることがある (例: `fable` は `anthropic/claude-fable-5` に解決される)。
+
+選んだモデルが利用不可 (subagent がモデル未検出エラーを返す) の場合は、表にあるもう一方の provider/modelId (astra ↔ fable) で起動し直す。
 
 ### 4. advisor の起動
 
@@ -88,7 +90,7 @@ subagent({
 })
 ```
 
-`advisor` の agent 定義は `model` を frontmatter に持たない (frontmatter の `model` はロックされ、tool の `model` パラメーターを無視するため)。`model` を渡し忘れるとセッションと同じモデルが継承されるので、必ず指定する。
+`advisor` の agent 定義は frontmatter に `model: anthropic/claude-fable-5-1` を持つが、これは `model` を省略したときの既定値にすぎない。pi-subagents 21.0.0 以降は tool の `model` パラメーターが frontmatter より優先されるので、手順 3 で選んだモデルが使われる。既定値はセッションのベンダーを考慮しない (Claude 系セッションで省略すると同じベンダーの fable になる)。また、既定値のモデル名を解決できない場合はエラーにならず、セッションと同じモデルを継承する。別ベンダーのモデルで相談するため、`model` は必ず指定する。
 
 advisor は自身で関連コードを確認した上で、診断・推奨・代替案・リスク・見落としを返す。助言を待ってから作業を続けるため、通常は foreground (`run_in_background` なし) で起動する。相談と並行して他の作業を進めたい場合のみ `run_in_background: true` で起動し、`get_subagent_result({ agent_id, wait: true })` で助言を回収する。
 

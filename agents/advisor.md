@@ -29,8 +29,12 @@ description: |
   </commentary>
   </example>
 
-# model は意図的に未指定。frontmatter で指定するとロックされ、subagent tool の model パラメーターが無視されるため。
-# advise スキルがセッションのモデルと異なるベンダーのモデル (Claude 系 → astra、OpenAI 系 → fable) を model パラメーターで渡す。
+# advise スキルはセッションと別ベンダーのモデル (Claude 系 → astra、OpenAI 系 → fable) を subagent tool の model パラメーターで渡す。
+# pi-subagents 21.0.0 以降は tool の引数が frontmatter より優先されるため、ここの model は引数を省略したときの既定値になる。
+# 既定値は強いモデルの fable とする。未指定だと省略時にセッションのモデルを継承し、別ベンダーでも強いモデルでもないことがあるため。
+# locked は付けない。付けると advise スキルの選んだモデルが無視される。
+# fuzzy 名だと意図と異なるバージョンに解決されることがある (例: fable → claude-fable-5) ため、provider/modelId で書く。
+model: anthropic/claude-fable-5-1
 tools: read, bash, find, grep
 ---
 

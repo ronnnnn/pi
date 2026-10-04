@@ -54,6 +54,7 @@ agent は pi-subagents の `subagent` tool から呼び出されます (例: `su
 skill / agent の一部は以下の pi package / extension を前提としています。
 
 - [@gotgenes/pi-subagents](https://www.npmjs.com/package/@gotgenes/pi-subagents) — `subagent` / `get_subagent_result` / `steer_subagent` tool
+  - 21.0.0 以降を前提とします。agent 定義の `model` は既定値として書いており、`subagent` tool の `model` パラメーターで上書きできます
 - background bash extension — `bash` の `run_in_background` / `notify_on` パラメーターと `bash_output` / `kill_shell` tool
 - todo / question / questionnaire extension — タスク管理とユーザーへの選択式質問
 - [ax](https://github.com/yusukebe/ax) — Web ページ・API 取得 (curl 代替)

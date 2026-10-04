@@ -64,7 +64,7 @@ pi-subagents の custom agent 形式 (`agents/<name>.md`) に変換する。**�
 | `name` | 削除 (ファイル名で決まる) |
 | `description` | 維持 (`<example>` ブロックも説明文としてそのまま有効) |
 | `tools` | pi の小文字 tool 名に変換 (`read, bash, grep, find, ls` 等)。**完全な allowlist** なので、必要な extension tool (`question` 等) も明示する。`WebFetch` / `WebSearch` を使っていた agent は `bash` を与えて ax / gh に書き換える |
-| `model` | fuzzy 名 (`sonnet` / `haiku` 等) を維持。`inherit` は省略 (デフォルトが inherit) |
+| `model` | fuzzy 名 (`sonnet` / `haiku` 等) を維持。`inherit` は省略 (デフォルトが inherit)。pi-subagents 21.0.0 以降は `subagent` tool の `model` パラメーターが優先され、frontmatter の値は既定値になる。呼び出し側からの上書きを禁止する必要がある場合だけ `locked: [model]` を追加する |
 | `context: fork` | `inherit_context: true` |
 | `memory` | 削除 (pi-subagents に相当機能なし) |
 | — | 必要に応じて `thinking` / `max_turns` / `prompt_mode` を追加できる |
