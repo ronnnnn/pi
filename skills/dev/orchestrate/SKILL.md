@@ -81,7 +81,7 @@ subagent({
 
 各起動の返却値に含まれる `agent_id` をサブタスク名と対にして控える (手順 4 の回収・介入・再開の宛先になる)。同時実行数の上限を超えた分は自動でキューイングされる。
 
-**モデルの上書き:** worker の model は agent 定義の frontmatter で固定されており、`subagent` の `model` パラメーターでは上書きできない。タスクの難易度が高い場合 (複雑な設計判断を含む等) は、`general-purpose` subagent に `model` パラメーターで上位モデルを指定して委譲し、ブリーフに worker の報告フォーマットを含める。
+**モデルの上書き:** worker の frontmatter にある `model: sonnet` は既定値にすぎない。pi-subagents 21.0.0 以降は `subagent` の `model` パラメーターが優先される。通常は省略して sonnet で起動する。タスクの難易度が高い場合 (複雑な設計判断を含む等) は、worker の起動時に `model` パラメーターで上位モデルを指定する。
 
 ### 4. 監視と再割り当て
 
