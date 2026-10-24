@@ -133,7 +133,7 @@ subagent({
 
 - **worker が 2 回の再投入でも失敗**: そのサブタスクは失敗として報告に含め、orchestrator は残りのタスクを続行する。最後に question tool で失敗タスクの扱い (上位モデルを指定して再委譲 / スキップしてユーザーに引き継ぐ) を確認する
 - **全 worker が失敗**: ブリーフの前提 (環境、権限、ゴールの実現性) に共通の問題がある可能性が高い。個別再投入はせず、失敗原因の共通点を分析してユーザーに報告し、方針を確認する
-- **worker agent が見つからない** (agent 定義未配置等): pi-subagents は自動的に `general-purpose` にフォールバックする。その場合は `general-purpose` subagent に `model: "anthropic/claude-sonnet-5-5"` を指定し、ブリーフに worker の報告フォーマットを含めて起動し直す
+- **worker agent が見つからない** (agent 定義未配置等): pi-subagents は自動的に `general-purpose` にフォールバックする。その場合は `general-purpose` subagent に `model: "anthropic/claude-sonnet-5-5"` (利用不可の場合は fuzzy 名 `"sonnet"`) を指定し、ブリーフに worker の報告フォーマットを含めて起動し直す
 
 ## Additional Resources
 
