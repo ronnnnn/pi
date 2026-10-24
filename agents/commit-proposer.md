@@ -29,7 +29,7 @@ description: |
   </commentary>
   </example>
 
-model: sonnet
+model: anthropic/claude-haiku-5-5
 tools: bash, read, grep, find
 ---
 

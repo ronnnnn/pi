@@ -5,7 +5,7 @@ description: 大きいモデル (メインセッション) が計画・判断・
 
 # Orchestrator-Workers ワークフロー
 
-メインセッション (大きいモデル) が orchestrator として計画・判断・統合に専念し、実行作業を `worker` subagent (sonnet) にファンアウトする。
+メインセッション (大きいモデル) が orchestrator として計画・判断・統合に専念し、実行作業を `worker` subagent (claude-sonnet-5-5) にファンアウトする。
 
 ## 重要な原則
 
@@ -81,7 +81,7 @@ subagent({
 
 各起動の返却値に含まれる `agent_id` をサブタスク名と対にして控える (手順 4 の回収・介入・再開の宛先になる)。同時実行数の上限を超えた分は自動でキューイングされる。
 
-**モデルの上書き:** worker の frontmatter にある `model: sonnet` は既定値にすぎない。pi-subagents 21.0.0 以降は `subagent` の `model` パラメーターが優先される。通常は省略して sonnet で起動する。タスクの難易度が高い場合 (複雑な設計判断を含む等) は、worker の起動時に `model` パラメーターで上位モデルを指定する。
+**モデルの上書き:** worker の frontmatter にある `model: anthropic/claude-sonnet-5-5` は既定値にすぎない。pi-subagents 21.0.0 以降は `subagent` の `model` パラメーターが優先される。通常は省略して claude-sonnet-5-5 で起動する。タスクの難易度が高い場合 (複雑な設計判断を含む等) は、worker の起動時に `model` パラメーターで上位モデルを指定する。
 
 ### 4. 監視と再割り当て
 
@@ -126,14 +126,14 @@ subagent({
 | ---------- | ------------------------------------------------- | ---------------------------- |
 | 入力       | ユーザーが列挙した複数タスク                      | 単一の大きなゴール           |
 | 分解       | 列挙からタスクを抽出・依存判定 (計画立案はしない) | orchestrator が計画・分解    |
-| モデル戦略 | セッションモデルを継承                            | 計画は大、実行は小 (sonnet)  |
+| モデル戦略 | セッションモデルを継承                            | 計画は大、実行は小 (claude-sonnet-5-5) |
 | 主目的     | 並列化による時間短縮                              | コスト効率とコンテキスト保護 |
 
 ## エラーハンドリング
 
 - **worker が 2 回の再投入でも失敗**: そのサブタスクは失敗として報告に含め、orchestrator は残りのタスクを続行する。最後に question tool で失敗タスクの扱い (上位モデルを指定して再委譲 / スキップしてユーザーに引き継ぐ) を確認する
 - **全 worker が失敗**: ブリーフの前提 (環境、権限、ゴールの実現性) に共通の問題がある可能性が高い。個別再投入はせず、失敗原因の共通点を分析してユーザーに報告し、方針を確認する
-- **worker agent が見つからない** (agent 定義未配置等): pi-subagents は自動的に `general-purpose` にフォールバックする。その場合は `general-purpose` subagent に `model: "sonnet"` を指定し、ブリーフに worker の報告フォーマットを含めて起動し直す
+- **worker agent が見つからない** (agent 定義未配置等): pi-subagents は自動的に `general-purpose` にフォールバックする。その場合は `general-purpose` subagent に `model: "anthropic/claude-sonnet-5-5"` (利用不可の場合は fuzzy 名 `"sonnet"`) を指定し、ブリーフに worker の報告フォーマットを含めて起動し直す
 
 ## Additional Resources
 

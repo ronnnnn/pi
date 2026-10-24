@@ -90,7 +90,7 @@ subagent({
 })
 ```
 
-`advisor` の agent 定義は frontmatter に `model: anthropic/claude-fable-5-1` を持つが、これは `model` を省略したときの既定値にすぎない。pi-subagents 21.0.0 以降は tool の `model` パラメーターが frontmatter より優先されるので、手順 3 で選んだモデルが使われる。既定値はセッションのベンダーを考慮しない (Claude 系セッションで省略すると同じベンダーの fable になる)。また、既定値のモデル名を解決できない場合はエラーにならず、セッションと同じモデルを継承する。別ベンダーのモデルで相談するため、`model` は必ず指定する。
+`advisor` の agent 定義は frontmatter に `model: openai-codex/gpt-6-astra` を持つが、これは `model` を省略したときの既定値にすぎない。pi-subagents 21.0.0 以降は tool の `model` パラメーターが frontmatter より優先されるので、手順 3 で選んだモデルが使われる。既定値はセッションのベンダーを考慮しない (OpenAI 系セッションで省略すると同じベンダーの astra になる)。また、既定値のモデル名を解決できない場合はエラーにならず、セッションと同じモデルを継承する。別ベンダーのモデルで相談するため、`model` は必ず指定する。
 
 advisor は自身で関連コードを確認した上で、診断・推奨・代替案・リスク・見落としを返す。助言を待ってから作業を続けるため、通常は foreground (`run_in_background` なし) で起動する。相談と並行して他の作業を進めたい場合のみ `run_in_background: true` で起動し、`get_subagent_result({ agent_id, wait: true })` で助言を回収する。
 

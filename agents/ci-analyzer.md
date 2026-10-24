@@ -29,7 +29,7 @@ description: |
   </commentary>
   </example>
 
-model: opus
+model: anthropic/claude-sonnet-5-5
 tools: read, bash, grep, find
 ---
 
