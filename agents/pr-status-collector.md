@@ -20,7 +20,7 @@ description: |
   </commentary>
   </example>
 
-model: haiku
+model: anthropic/claude-haiku-5-5
 tools: bash
 ---
 

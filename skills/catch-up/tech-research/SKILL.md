@@ -61,7 +61,7 @@ subagent tool で調査用の subagent を起動する。subagent には以下�
   - 汎用調査: `general-purpose`
   - 最新バージョン確認: `latest-version`
 - `prompt`: 調査内容を具体的に記述
-- `model`: 軽量な調査は `haiku`、複雑な調査は `sonnet`
+- `model`: 軽量な調査は `anthropic/claude-haiku-5-5`、複雑な調査は `anthropic/claude-sonnet-5-5` (fuzzy 名は旧バージョンに解決されることがあるため provider/modelId で指定する)
 
 **並列調査**: 独立した複数の調査対象がある場合、`run_in_background: true` で複数の subagent を同時に起動して並列実行し、`get_subagent_result` で結果を回収する。
 
